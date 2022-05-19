@@ -141,8 +141,8 @@ void init_NRF(){
   dw_irq_init();
   /* Small pause before startup */
   nrf_delay_ms(2);
-  SysTick_Config(64);
-  NVIC_EnableIRQ(SysTick_IRQn);
+  //SysTick_Config(64);
+  //NVIC_EnableIRQ(SysTick_IRQn);
 }
 
 
@@ -156,7 +156,7 @@ uint8_t set_radio_params(){
     dwt_setpreambledetecttimeout(instance_info.config.cca_wait);
     return DWT_START_TX_CCA;
   }
-  //return DWT_START_TX_IMMEDIATE;
+  return DWT_START_TX_IMMEDIATE;
 }
 
 
@@ -271,8 +271,9 @@ void instance_init(){
     //dwt_setpanid(1);
     instance_rx();
   }
-  if(identity_get_operations() & IDENTITY_OPERATIONS_CONSTANT_TX)
+  if(identity_get_operations() & IDENTITY_OPERATIONS_CONSTANT_TX){
     instance_tx();
+  }
   if(identity_get_operations() & IDENTITY_OPERATIONS_DATA_TX)
     instance_rx();
 }
@@ -295,7 +296,7 @@ int seq_indicator = 10;
 int noise_preamble_indicator = 0;
 Radio_action rx_handle_cb(){
   dwt_readrxdata( &rx_packet, 30, 0);
-  if (1){
+  if (identity_get_operations() & IDENTITY_OPERATIONS_DATA_RX){
     gpio_set(PORT_DE);
     gpio_reset(PORT_DE);
     packet_info_t *payload = rx_packet.payload;
@@ -303,7 +304,7 @@ Radio_action rx_handle_cb(){
     
   }
   if (identity_get_operations() & IDENTITY_OPERATIONS_DATA_TX)
-    return ACTION_TX;
+    return ACTION_TX_DLY;
   if (identity_get_operations() & IDENTITY_OPERATIONS_DATA_RX)
     return ACTION_RX;
 }
@@ -385,32 +386,33 @@ void instance_loop(){
   }
   if (status_reg & SYS_STATUS_ALL_RX_ERR){
     dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_ERR);
-    ts2 = m_systick_cnt;
-    printf("%d, %d,", err_counter, ts2-ts1);
-    err_counter++;
-    if(status_reg & SYS_STATUS_RXPHE_BIT_MASK)
-      printf("PHE\n");
-    if(status_reg & SYS_STATUS_RXFCE_BIT_MASK)
-      printf("FCE\n");
-    if(status_reg & SYS_STATUS_RXFSL_BIT_MASK)
-      printf("FSL\n");
-    if(status_reg & SYS_STATUS_RXSTO_BIT_MASK)
-      printf("STO\n");
-    if(status_reg & SYS_STATUS_CIAERR_BIT_MASK)
-      printf("CIA\n");
-    if(status_reg & SYS_STATUS_ARFE_BIT_MASK)
-      printf("aref\n");
+    //ts2 = m_systick_cnt;
+    //printf("%d, %d,", err_counter, ts2-ts1);
+    //err_counter++;
+    //if(status_reg & SYS_STATUS_RXPHE_BIT_MASK)
+    //  printf("PHE\n");
+    //if(status_reg & SYS_STATUS_RXFCE_BIT_MASK)
+    //  printf("FCE\n");
+    //if(status_reg & SYS_STATUS_RXFSL_BIT_MASK)
+    //  printf("FSL\n");
+    //if(status_reg & SYS_STATUS_RXSTO_BIT_MASK)
+    //  printf("STO\n");
+    //if(status_reg & SYS_STATUS_CIAERR_BIT_MASK)
+    //  printf("CIA\n");
+    //if(status_reg & SYS_STATUS_ARFE_BIT_MASK)
+    //  printf("aref\n");
 
     gpio_reset(LED_RX); 
     act = rx_err_handle_cb();
     
   }
   if (status_reg & SYS_STATUS_RXFCG_BIT_MASK){
-    gpio_reset(LED_RX);
+    
     dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
     ts2 = m_systick_cnt;
-    printf("%d,", ts2-ts1);
+    //printf("%d,", ts2-ts1);
     act = rx_handle_cb();
+    gpio_reset(LED_RX);
   }
  
   if (act == ACTION_RX){
@@ -420,6 +422,12 @@ void instance_loop(){
     if(!cca_flg){
       Sleep(instance_info.config.IPI_wait);
     }
+    instance_tx();
+  }
+  if (act == ACTION_TX_DLY){
+    nrf_delay_us(instance_info.config.tx_after_rx_wait);
+    //Sleep(1);
+    //gpio_set(LED_TX);
     instance_tx();
   }
 

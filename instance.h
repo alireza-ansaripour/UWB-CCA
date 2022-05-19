@@ -36,6 +36,7 @@ typedef enum Role{
 
 typedef enum Radio_action{
   ACTION_TX,
+  ACTION_TX_DLY,
   ACTION_RX,
   ACTION_NONE,
 }Radio_action; 

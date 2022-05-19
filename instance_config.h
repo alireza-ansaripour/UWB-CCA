@@ -10,7 +10,7 @@ typedef struct
 		dwt_txconfig_t tx_config;
 		uint16_t tx_number;
 		uint32_t sequence_number;
-		uint32_t initial_wait;
+		uint32_t tx_after_rx_wait;
 		uint32_t IPI_wait;
                 uint32_t cca_wait;
                 uint16_t dst_addr;
