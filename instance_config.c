@@ -51,6 +51,7 @@ void instance_config_identity_init() {
     case 4113761924:
       identity_set_address(0x0001);
       identity_set_role(ROLE_TS);
+      instance_info.config.tx_number = 500;
       //radio_config.txCode = 10;
     break;
     case 153137759:
