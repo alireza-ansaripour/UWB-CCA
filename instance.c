@@ -15,6 +15,8 @@
 #include "ring_buffer.h"
 #include "mac_802_15_4.h"
 #include "nrf_drv_uart.h"
+#define SIGNEX(v, sb) ((v) | (((v) & (1 << (sb))) ? ~((1 << (sb))-1) : 0))
+
 static void uart_event_handler(nrf_drv_uart_event_t * p_event, void* p_context)
 {
     if (p_event->type == NRF_DRV_UART_EVT_RX_DONE)
@@ -141,8 +143,8 @@ void init_NRF(){
   dw_irq_init();
   /* Small pause before startup */
   nrf_delay_ms(2);
-  //SysTick_Config(64);
-  //NVIC_EnableIRQ(SysTick_IRQn);
+  SysTick_Config(64);
+  NVIC_EnableIRQ(SysTick_IRQn);
 }
 
 
@@ -294,7 +296,61 @@ void send_UART_msg(uint8_t *msg, uint8_t payload_len){
 
 int seq_indicator = 10;
 int noise_preamble_indicator = 0;
+uint8_t cir [100];
+uint8_t sample[7];
 Radio_action rx_handle_cb(){
+  //dwt_readaccdata(cir, sizeof(cir), 0);
+  for (int index = 0; index < 500; index++){
+    dwt_readaccdata(sample, sizeof(sample), index);
+    int32_t real = 0;
+    real =  sample[3] << 16;
+    real += sample[2] << 8;
+    real += sample[1];
+    if (real & 0x020000)  // MSB of 18 bit value is 1
+        real |= 0xfffc0000;
+    int32_t img = 0;
+    img =  sample[6] << 16;
+    img += sample[5] << 8;
+    img += sample[4];
+    if (img & 0x020000)  // MSB of 18 bit value is 1
+        img |= 0xfffc0000;
+    printf("%d,%d\n", real, img);
+  }
+
+    for (int index = 500; index < 1000; index++){
+    dwt_readaccdata(sample, sizeof(sample), index);
+    int32_t real = 0;
+    real =  sample[3] << 16;
+    real += sample[2] << 8;
+    real += sample[1];
+    if (real & 0x020000)  // MSB of 18 bit value is 1
+        real |= 0xfffc0000;
+    int32_t img = 0;
+    img =  sample[6] << 16;
+    img += sample[5] << 8;
+    img += sample[4];
+    if (img & 0x020000)  // MSB of 18 bit value is 1
+        img |= 0xfffc0000;
+    printf("%d,%d\n", real, img);
+  }
+
+  //for (int i = 0; i < 10; i++){
+  //  dwt_readaccdata(sample, 4, i);
+  //}
+
+  for(int j = 1; j < sizeof(cir) - 3; j+=3){
+    int32_t num = 0;
+    num =  cir[j + 2] << 16;
+    num += cir[j + 1] << 8;
+    num += cir[j];
+
+    if (num & 0x020000)  // MSB of 18 bit value is 1
+        num |= 0xfffc0000;
+
+    printf("%X, %d\n", num, num);
+    printf("%d, %d, %d", cir[j], cir[j+1], cir[j+2]);
+    printf("\n");
+  }
   dwt_readrxdata( &rx_packet, 30, 0);
   if (identity_get_operations() & IDENTITY_OPERATIONS_DATA_RX){
     gpio_set(PORT_DE);
@@ -327,7 +383,45 @@ Radio_action tx_handle_cb(){
 }
 
 
+
+uint32_t status_reg, status_regh;
 Radio_action rx_err_handle_cb(){
+  if(status_reg & SYS_STATUS_RXFSL_BIT_MASK){
+      for (int index = 0; index < 500; index++){
+        dwt_readaccdata(sample, sizeof(sample), index);
+        int32_t real = 0;
+        real =  sample[3] << 16;
+        real += sample[2] << 8;
+        real += sample[1];
+        if (real & 0x020000)  // MSB of 18 bit value is 1
+            real |= 0xfffc0000;
+        int32_t img = 0;
+        img =  sample[6] << 16;
+        img += sample[5] << 8;
+        img += sample[4];
+        if (img & 0x020000)  // MSB of 18 bit value is 1
+            img |= 0xfffc0000;
+        printf("%d, %d, %f\n", real, img, sqrt(real*real + img*img));
+      }
+
+        for (int index = 500; index < 1000; index++){
+        dwt_readaccdata(sample, sizeof(sample), index);
+        int32_t real = 0;
+        real =  sample[3] << 16;
+        real += sample[2] << 8;
+        real += sample[1];
+        if (real & 0x020000)  // MSB of 18 bit value is 1
+            real |= 0xfffc0000;
+        int32_t img = 0;
+        img =  sample[6] << 16;
+        img += sample[5] << 8;
+        img += sample[4];
+        if (img & 0x020000)  // MSB of 18 bit value is 1
+            img |= 0xfffc0000;
+        printf("%d, %d, %f\n", real, img, sqrt(real*real + img*img));
+      }
+  
+  }
   noise_preamble_indicator++;
   return ACTION_RX;
 }
@@ -336,7 +430,7 @@ Radio_action cca_fail_handle_cb(){
   return ACTION_TX;
 }
 
-uint32_t status_reg, status_regh;
+
 uint32_t ts1, ts2;
 int err_counter = 0;
 void instance_loop(){
@@ -386,21 +480,21 @@ void instance_loop(){
   }
   if (status_reg & SYS_STATUS_ALL_RX_ERR){
     dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_ERR);
-    //ts2 = m_systick_cnt;
-    //printf("%d, %d,", err_counter, ts2-ts1);
-    //err_counter++;
-    //if(status_reg & SYS_STATUS_RXPHE_BIT_MASK)
-    //  printf("PHE\n");
-    //if(status_reg & SYS_STATUS_RXFCE_BIT_MASK)
-    //  printf("FCE\n");
-    //if(status_reg & SYS_STATUS_RXFSL_BIT_MASK)
-    //  printf("FSL\n");
-    //if(status_reg & SYS_STATUS_RXSTO_BIT_MASK)
-    //  printf("STO\n");
-    //if(status_reg & SYS_STATUS_CIAERR_BIT_MASK)
-    //  printf("CIA\n");
-    //if(status_reg & SYS_STATUS_ARFE_BIT_MASK)
-    //  printf("aref\n");
+    ts2 = m_systick_cnt;
+    printf("%d, %d,", err_counter, ts2-ts1);
+    err_counter++;
+    if(status_reg & SYS_STATUS_RXPHE_BIT_MASK)
+      printf("PHE\n");
+    if(status_reg & SYS_STATUS_RXFCE_BIT_MASK)
+      printf("FCE\n");
+    if(status_reg & SYS_STATUS_RXFSL_BIT_MASK)
+      printf("FSL\n");
+    if(status_reg & SYS_STATUS_RXSTO_BIT_MASK)
+      printf("STO\n");
+    if(status_reg & SYS_STATUS_CIAERR_BIT_MASK)
+      printf("CIA\n");
+    if(status_reg & SYS_STATUS_ARFE_BIT_MASK)
+      printf("aref\n");
 
     gpio_reset(LED_RX); 
     act = rx_err_handle_cb();
