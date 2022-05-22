@@ -61,5 +61,5 @@ typedef struct
 
 void instance_init();
 void instance_loop();
-void send_UART_msg(uint8_t *msg, uint8_t payload_len);
+void send_UART_msg(uint8_t *msg, uint16_t payload_len);
 

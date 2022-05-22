@@ -280,27 +280,28 @@ void instance_init(){
     instance_rx();
 }
 
-void send_UART_msg(uint8_t *msg, uint8_t payload_len){
+void send_UART_msg(uint8_t *msg, uint16_t payload_len){
   uint8_t pointer = 0;
-  if(payload_len > 200){
-    return -1;
-  }
   UART_msg_payload[0] = 0x5C;
   UART_msg_payload[1] = 0x51;
-  UART_msg_payload[2] = payload_len;
-  memcpy(UART_msg_payload + 3, msg, payload_len);
-  uint32_t ret =  send_uart(UART_msg_payload, payload_len + 3);
+  memcpy(&UART_msg_payload[2], (uint8_t *) &payload_len, 2);
+  memcpy(UART_msg_payload + 4, msg, payload_len);
+  for(int index=0; index <= payload_len + 4; index += 100){
+    send_uart(&UART_msg_payload[index], 100);
+    Sleep(20);
+  }
+  //ret =  send_uart(&UART_msg_payload[100], 100);
   //printf("alireza\n");
   return;
 }
 
 int seq_indicator = 10;
 int noise_preamble_indicator = 0;
-uint8_t cir [100];
+int32_t cir [2000];
 uint8_t sample[7];
 Radio_action rx_handle_cb(){
-  //dwt_readaccdata(cir, sizeof(cir), 0);
-  for (int index = 0; index < 500; index++){
+  //send_UART_msg(cir, 100);
+  for (int index = 0; index < 1000; index++){
     dwt_readaccdata(sample, sizeof(sample), index);
     int32_t real = 0;
     real =  sample[3] << 16;
@@ -314,49 +315,16 @@ Radio_action rx_handle_cb(){
     img += sample[4];
     if (img & 0x020000)  // MSB of 18 bit value is 1
         img |= 0xfffc0000;
-    printf("%d,%d\n", real, img);
+    cir[2*index]     = real;
+    cir[2*index + 1] = img;
   }
-
-    for (int index = 500; index < 1000; index++){
-    dwt_readaccdata(sample, sizeof(sample), index);
-    int32_t real = 0;
-    real =  sample[3] << 16;
-    real += sample[2] << 8;
-    real += sample[1];
-    if (real & 0x020000)  // MSB of 18 bit value is 1
-        real |= 0xfffc0000;
-    int32_t img = 0;
-    img =  sample[6] << 16;
-    img += sample[5] << 8;
-    img += sample[4];
-    if (img & 0x020000)  // MSB of 18 bit value is 1
-        img |= 0xfffc0000;
-    printf("%d,%d\n", real, img);
-  }
-
-  //for (int i = 0; i < 10; i++){
-  //  dwt_readaccdata(sample, 4, i);
-  //}
-
-  for(int j = 1; j < sizeof(cir) - 3; j+=3){
-    int32_t num = 0;
-    num =  cir[j + 2] << 16;
-    num += cir[j + 1] << 8;
-    num += cir[j];
-
-    if (num & 0x020000)  // MSB of 18 bit value is 1
-        num |= 0xfffc0000;
-
-    printf("%X, %d\n", num, num);
-    printf("%d, %d, %d", cir[j], cir[j+1], cir[j+2]);
-    printf("\n");
-  }
+  send_UART_msg((uint8_t *) &cir[1400], 2400);
   dwt_readrxdata( &rx_packet, 30, 0);
   if (identity_get_operations() & IDENTITY_OPERATIONS_DATA_RX){
     gpio_set(PORT_DE);
     gpio_reset(PORT_DE);
     packet_info_t *payload = rx_packet.payload;
-    printf("%d\n",payload->sequence_number);
+    //printf("%d\n",payload->sequence_number);
     
   }
   if (identity_get_operations() & IDENTITY_OPERATIONS_DATA_TX)

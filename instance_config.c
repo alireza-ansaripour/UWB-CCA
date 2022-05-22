@@ -63,7 +63,7 @@ void instance_config_identity_init() {
     case 1697349500:
       identity_set_address(0x0003);
       identity_set_role(ROLE_TX);
-      instance_info.config.tx_after_rx_wait = 1000;
+      instance_info.config.IPI_wait = 1000;
       radio_config.txCode = 11;
       instance_info.config.tx_number=0;
     break;
