@@ -15,7 +15,9 @@
 #include "ring_buffer.h"
 #include "mac_802_15_4.h"
 #include "nrf_drv_uart.h"
-#define SIGNEX(v, sb) ((v) | (((v) & (1 << (sb))) ? ~((1 << (sb))-1) : 0))
+
+#define CIR_SAMPLE 32
+#define CIR_SAMPLE_BUFFER CIR_SAMPLE * 6 + 1
 
 static void uart_event_handler(nrf_drv_uart_event_t * p_event, void* p_context)
 {
@@ -299,24 +301,60 @@ int seq_indicator = 10;
 int noise_preamble_indicator = 0;
 int32_t cir [2000];
 uint8_t sample[7];
-Radio_action rx_handle_cb(){
-  //send_UART_msg(cir, 100);
-  for (int index = 0; index < 1000; index++){
-    dwt_readaccdata(sample, sizeof(sample), index);
-    int32_t real = 0;
-    real =  sample[3] << 16;
-    real += sample[2] << 8;
-    real += sample[1];
-    if (real & 0x020000)  // MSB of 18 bit value is 1
+
+
+bool read_cir_regbank(uint8_t * sample_buffer,int sample_buffer_size,int offset,int32_t * real_array,int32_t * img_array,int cir_array_size){
+if (sample_buffer_size % 6 != 1)
+    return false;
+if (((sample_buffer_size - 1) / 6) != cir_array_size)
+    return false;
+    dwt_readaccdata(sample_buffer,sample_buffer_size,offset);
+    int j=0;
+    for (int i=1;i<sample_buffer_size;i+=6){
+      int32_t real=0;
+      int32_t img = 0;
+      real =  sample_buffer[i+2] << 16;
+      real += sample_buffer[i+1] << 8;
+      real += sample_buffer[i];
+      if (real & 0x020000)  // MSB of 18 bit value is 1
         real |= 0xfffc0000;
-    int32_t img = 0;
-    img =  sample[6] << 16;
-    img += sample[5] << 8;
-    img += sample[4];
-    if (img & 0x020000)  // MSB of 18 bit value is 1
+   //   real_array[j]=real;
+      img =  sample_buffer[i+5] << 16;
+      img += sample_buffer[i+4] << 8;
+      img += sample_buffer[i+3];
+      if (img & 0x020000)  // MSB of 18 bit value is 1
         img |= 0xfffc0000;
-    cir[2*index]     = real;
-    cir[2*index + 1] = img;
+     // img_array[j]=img;
+     real_array[j]=real;
+     img_array[j]=img;
+     //printf("%d,%d\n",real,img);
+      j++;
+       
+    }
+return true;
+}
+
+
+Radio_action rx_handle_cb(){
+  bool res;
+  uint8_t sample[CIR_SAMPLE_BUFFER];
+  int32_t real_arr[CIR_SAMPLE];
+  int32_t img_arr[CIR_SAMPLE];
+
+
+  //send_UART_msg(cir, 100);
+  int k=0;
+  for (int offset = 0; offset < 992 ; offset+=32){
+    read_cir_regbank(sample,CIR_SAMPLE_BUFFER,offset,real_arr,img_arr,CIR_SAMPLE);
+ 
+    for(int j=0;j<32;j++)
+    {
+      cir[k]=real_arr[j];
+      k++;
+      cir[k]=img_arr[j];
+      k++;
+      
+    }
   }
   send_UART_msg((uint8_t *) &cir[1400], 2400);
   dwt_readrxdata( &rx_packet, 30, 0);
