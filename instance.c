@@ -337,32 +337,30 @@ return true;
 
 Radio_action rx_handle_cb(){
   bool res;
-  uint8_t sample[CIR_SAMPLE_BUFFER];
-  int32_t real_arr[CIR_SAMPLE];
-  int32_t img_arr[CIR_SAMPLE];
+  //uint8_t sample[CIR_SAMPLE_BUFFER];
+  //int32_t real_arr[CIR_SAMPLE];
+  //int32_t img_arr[CIR_SAMPLE];
+  //int k=0;
 
-
-  //send_UART_msg(cir, 100);
-  int k=0;
-  for (int offset = 0; offset < 992 ; offset+=32){
-    read_cir_regbank(sample,CIR_SAMPLE_BUFFER,offset,real_arr,img_arr,CIR_SAMPLE);
+  //for (int offset = 0; offset < 992 ; offset+=32){
+  //  read_cir_regbank(sample,CIR_SAMPLE_BUFFER,offset,real_arr,img_arr,CIR_SAMPLE);
  
-    for(int j=0;j<32;j++)
-    {
-      cir[k]=real_arr[j];
-      k++;
-      cir[k]=img_arr[j];
-      k++;
+  //  for(int j=0;j<32;j++)
+  //  {
+  //    cir[k]=real_arr[j];
+  //    k++;
+  //    cir[k]=img_arr[j];
+  //    k++;
       
-    }
-  }
-  send_UART_msg((uint8_t *) &cir[1400], 2400);
+  //  }
+  //}
+  //send_UART_msg((uint8_t *) &cir[1400], 2400);
   dwt_readrxdata( &rx_packet, 30, 0);
   if (identity_get_operations() & IDENTITY_OPERATIONS_DATA_RX){
     gpio_set(PORT_DE);
     gpio_reset(PORT_DE);
     packet_info_t *payload = rx_packet.payload;
-    //printf("%d\n",payload->sequence_number);
+    printf("%d\n",payload->sequence_number);
     
   }
   if (identity_get_operations() & IDENTITY_OPERATIONS_DATA_TX)
@@ -392,42 +390,42 @@ Radio_action tx_handle_cb(){
 
 uint32_t status_reg, status_regh;
 Radio_action rx_err_handle_cb(){
-  if(status_reg & SYS_STATUS_RXFSL_BIT_MASK){
-      for (int index = 0; index < 500; index++){
-        dwt_readaccdata(sample, sizeof(sample), index);
-        int32_t real = 0;
-        real =  sample[3] << 16;
-        real += sample[2] << 8;
-        real += sample[1];
-        if (real & 0x020000)  // MSB of 18 bit value is 1
-            real |= 0xfffc0000;
-        int32_t img = 0;
-        img =  sample[6] << 16;
-        img += sample[5] << 8;
-        img += sample[4];
-        if (img & 0x020000)  // MSB of 18 bit value is 1
-            img |= 0xfffc0000;
-        printf("%d, %d, %f\n", real, img, sqrt(real*real + img*img));
-      }
+  //if(status_reg & SYS_STATUS_RXFSL_BIT_MASK){
+  //    for (int index = 0; index < 500; index++){
+  //      dwt_readaccdata(sample, sizeof(sample), index);
+  //      int32_t real = 0;
+  //      real =  sample[3] << 16;
+  //      real += sample[2] << 8;
+  //      real += sample[1];
+  //      if (real & 0x020000)  // MSB of 18 bit value is 1
+  //          real |= 0xfffc0000;
+  //      int32_t img = 0;
+  //      img =  sample[6] << 16;
+  //      img += sample[5] << 8;
+  //      img += sample[4];
+  //      if (img & 0x020000)  // MSB of 18 bit value is 1
+  //          img |= 0xfffc0000;
+  //      printf("%d, %d, %f\n", real, img, sqrt(real*real + img*img));
+  //    }
 
-        for (int index = 500; index < 1000; index++){
-        dwt_readaccdata(sample, sizeof(sample), index);
-        int32_t real = 0;
-        real =  sample[3] << 16;
-        real += sample[2] << 8;
-        real += sample[1];
-        if (real & 0x020000)  // MSB of 18 bit value is 1
-            real |= 0xfffc0000;
-        int32_t img = 0;
-        img =  sample[6] << 16;
-        img += sample[5] << 8;
-        img += sample[4];
-        if (img & 0x020000)  // MSB of 18 bit value is 1
-            img |= 0xfffc0000;
-        printf("%d, %d, %f\n", real, img, sqrt(real*real + img*img));
-      }
+  //      for (int index = 500; index < 1000; index++){
+  //      dwt_readaccdata(sample, sizeof(sample), index);
+  //      int32_t real = 0;
+  //      real =  sample[3] << 16;
+  //      real += sample[2] << 8;
+  //      real += sample[1];
+  //      if (real & 0x020000)  // MSB of 18 bit value is 1
+  //          real |= 0xfffc0000;
+  //      int32_t img = 0;
+  //      img =  sample[6] << 16;
+  //      img += sample[5] << 8;
+  //      img += sample[4];
+  //      if (img & 0x020000)  // MSB of 18 bit value is 1
+  //          img |= 0xfffc0000;
+  //      printf("%d, %d, %f\n", real, img, sqrt(real*real + img*img));
+  //    }
   
-  }
+  //}
   noise_preamble_indicator++;
   return ACTION_RX;
 }
