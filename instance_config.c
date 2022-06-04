@@ -106,7 +106,7 @@ void identity_set_role(Role role) {
 
 void init_config() {
   instance_info.config.radio_config = radio_config;
-  instance_info.config.packet_size = 100;
+  instance_info.config.packet_size = 300;
   if (identity_get_operations() & IDENTITY_OPERATIONS_CONSTANT_TX)
     instance_info.config.tx_number = TX_PKT_CNT;
   else

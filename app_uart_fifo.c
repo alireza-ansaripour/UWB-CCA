@@ -69,7 +69,7 @@ static void uart_event_handler(nrf_drv_uart_event_t * p_event, void* p_context)
 {
     app_uart_evt_t app_uart_event;
     uint32_t err_code;
-
+    printf("here");
     switch (p_event->type)
     {
         case NRF_DRV_UART_EVT_RX_DONE:

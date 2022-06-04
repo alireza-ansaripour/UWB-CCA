@@ -19,6 +19,10 @@
 #define CIR_SAMPLE 32
 #define CIR_SAMPLE_BUFFER CIR_SAMPLE * 6 + 1
 
+int uart_index = 0;
+uint8_t UART_msg_payload[200];
+uint8_t UART_byte;
+static nrf_drv_uart_t app_uart_inst = NRF_DRV_UART_INSTANCE(APP_UART_DRIVER_INSTANCE);
 static void uart_event_handler(nrf_drv_uart_event_t * p_event, void* p_context)
 {
     if (p_event->type == NRF_DRV_UART_EVT_RX_DONE)
@@ -26,6 +30,8 @@ static void uart_event_handler(nrf_drv_uart_event_t * p_event, void* p_context)
         if (p_event->data.rxtx.bytes)
         {
             // Event to notify that data has been received
+            uart_index++;
+            nrf_drv_uart_rx(&app_uart_inst, &UART_byte, 1);
         }
     }
     else if (p_event->type == NRF_DRV_UART_EVT_ERROR)
@@ -38,7 +44,7 @@ static void uart_event_handler(nrf_drv_uart_event_t * p_event, void* p_context)
 
     }
 }
-static nrf_drv_uart_t app_uart_inst = NRF_DRV_UART_INSTANCE(APP_UART_DRIVER_INSTANCE);
+
 static void uart_init(){
     nrf_drv_uart_config_t uart_config = NRF_DRV_UART_DEFAULT_CONFIG;
     uart_config.baudrate = UART_BAUDRATE_BAUDRATE_Baud115200; //User defined
@@ -61,7 +67,6 @@ static void uart_init(){
 #define SWITCH_CONF_INDEX 10
 
 
-uint8_t UART_msg_payload[200];
 uint32_t sequence_numbers[10000];
 uint8_t rx_buffer[100];
 mac_frame_802_15_4_format_t mac_frame;
@@ -95,8 +100,6 @@ void init_LEDs(){
 
 }
 int res;
-
-uint8_t tx_msg[] = {0x61, 0x88, 0, 0x0, 0x0, 0x1, 0x0, 'X', 'T', 'm', 'a', 'c', 'p', 'a', 'y', 'l', 'o', 'a', 'd'};
 void init_tx_packet(){
   tx_packet.src = identity_get_address();
   if(identity_get_operations() & IDENTITY_OPERATIONS_TIMESYNC){
@@ -112,11 +115,15 @@ void init_tx_packet(){
   tx_packet.src = identity_get_address();
   tx_packet.dst = instance_info.config.dst_addr;
   payload.sequence_number = 0;
-  memcpy(tx_packet.payload, (uint8_t *)&payload, sizeof(payload));
-  if (dwt_writetxdata(sizeof(instance_info.config.packet_size), &tx_packet, 0) != DWT_SUCCESS){
+  for(int j=0; j< instance_info.config.packet_size; j++){
+    payload.payload[j] = (j % 100);
+  }
+  
+  memcpy(tx_packet.payload, &payload, (instance_info.config.packet_size));
+  if (dwt_writetxdata((instance_info.config.packet_size), &tx_packet, 0) != DWT_SUCCESS){
     
   }
-  dwt_writetxfctrl(sizeof(instance_info.config.packet_size), 0, 0);
+  dwt_writetxfctrl((instance_info.config.packet_size), 0, 0);
   
 
 }
@@ -173,7 +180,7 @@ void instance_tx(void){
   tx_packet.sequence_number = instance_info.config.sequence_number;
   packet_info_t *payload = tx_packet.payload;
   payload->sequence_number = instance_info.config.sequence_number;
-  dwt_writetxdata(50, (uint8_t *) &tx_packet, 0);
+  dwt_writetxdata(300, (uint8_t *) &tx_packet, 0);
   dwt_writetxfctrl(instance_info.config.packet_size, 0, 0);
   //n1 = m_systick_cnt;
   //while(m_systick_cnt - n1 < 1000){
@@ -280,6 +287,7 @@ void instance_init(){
   }
   if(identity_get_operations() & IDENTITY_OPERATIONS_DATA_TX)
     instance_rx();
+  nrf_drv_uart_rx(&app_uart_inst, &UART_byte, 1);
 }
 
 void send_UART_msg(uint8_t *msg, uint16_t payload_len){
@@ -355,7 +363,8 @@ Radio_action rx_handle_cb(){
   //  }
   //}
   //send_UART_msg((uint8_t *) &cir[1400], 2400);
-  dwt_readrxdata( &rx_packet, 30, 0);
+  dwt_readrxdata( &rx_packet, 40, 0);
+  dwt_readrxdata( (uint8_t *)(&rx_packet) + 40, 40, 40);
   if (identity_get_operations() & IDENTITY_OPERATIONS_DATA_RX){
     gpio_set(PORT_DE);
     gpio_reset(PORT_DE);

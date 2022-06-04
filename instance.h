@@ -13,6 +13,7 @@ typedef struct{
 
 typedef  struct{
   uint32_t sequence_number;
+  uint8_t payload[900];
 }packet_info_t __attribute__((packed)); 
 
 #define MSG_TIME_SYNC					0x76
