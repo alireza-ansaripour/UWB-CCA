@@ -16,6 +16,14 @@ typedef  struct{
   uint8_t payload[900];
 }packet_info_t __attribute__((packed)); 
 
+
+typedef struct{
+  uint32_t sequence_number;
+  uint32_t N;
+  uint16_t C;
+  uint16_t dcg;
+}report_packet_t __attribute__((packed));
+
 #define MSG_TIME_SYNC					0x76
 #define MSG_DATA                                        0xDA
 #define MSG_CONF				        0xC0

@@ -19,8 +19,8 @@ instance_info_t instance_info;
 
 dwt_config_t radio_config = {
     5,               /* Channel number. */
-    DWT_PLEN_1024,    /* Preamble length. Used in TX only. */
-    DWT_PAC4,        /* Preamble acquisition chunk size. Used in RX only. */
+    DWT_PLEN_128,    /* Preamble length. Used in TX only. */
+    DWT_PAC8,        /* Preamble acquisition chunk size. Used in RX only. */
     9,               /* TX preamble code. Used in TX only. */
     9,               /* RX preamble code. Used in RX only. */
     1,               /* 0 to use standard 8 symbol SFD, 1 to use non-standard 8 symbol, 2 for non-standard 16 symbol SFD and 3 for 4z 8 symbol SDF type */
@@ -48,14 +48,14 @@ void instance_config_identity_init() {
   uint32_t dev_id = NRF_FICR->DEVICEADDR[0];
   init_config(); 
   switch(dev_id){
-    case 1649967333:
+    case 153137759:
       identity_set_address(0x0001);
       
       instance_info.config.tx_number = 0;
       radio_config.txCode = 9;
       identity_set_role(ROLE_TS);
     break;
-    case 153137759:
+    case 1697349500:
       radio_config.rxCode = 9;
       identity_set_role(ROLE_RX);
     break;

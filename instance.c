@@ -449,17 +449,11 @@ Radio_action rx_handle_cb(){
   //send_UART_msg((uint8_t *) &cir[1400], 2400);
   dwt_rxdiag_t diagnostics;
   dwt_readdiagnostics(&diagnostics);
-  
+  uint16_t N = dwt_read16bitoffsetreg(0xc0000,0x58)& 0xFFF;//N
+  uint32_t C = dwt_read32bitoffsetreg(0xc0000,0x2C)& 0x1FFFF;//C
+  uint8_t dgc=(dwt_read32bitoffsetreg(0x30000,0x60))>>28;//D
 
-    dwt_rxdiag_t diagnostics2;
-  dwt_readdiagnostics2(&diagnostics2);
-
-  uint16_t ip_diag_1= dwt_read16bitoffsetreg(0xc0000,0x58)& 0xFFF;//C
-  uint32_t ip_diag_12= dwt_read32bitoffsetreg(0xc0000,0x2C)& 0x1FFFF;//N
-  uint32_t dgc=(dwt_read32bitoffsetreg(0x30000,0x60))>>28;//D
-  printf("%d,%d,%d\n",ip_diag_1,ip_diag_12,dgc);
-  printf("%d, %d\n", diagnostics.ipatovAccumCount,  diagnostics2.ipatovAccumCount);
-  //uint32_t pwr = 
+   
   dwt_readfromdevice(IP_TOA_LO_ID,IP_DIAG_1_ID - IP_TOA_LO_ID,IP_DIAG_1_LEN,ip_diag1);
   dwt_readrxdata( &rx_packet, 40, 0);
   dwt_readrxdata( (uint8_t *)(&rx_packet) + 40, 40, 40);
@@ -467,6 +461,14 @@ Radio_action rx_handle_cb(){
     gpio_set(PORT_DE);
     gpio_reset(PORT_DE);
     packet_info_t *payload = rx_packet.payload;
+    report_packet_t rep = {
+      payload->sequence_number,
+      N,
+      C,
+      dgc
+    };
+    send_UART_msg((uint8_t *) &rep, sizeof(rep));
+    printf("%d,%d,%d\n",ip_diag_1,ip_diag_12,dgc);
     printf("%d\n",payload->sequence_number);
     
   }
@@ -497,6 +499,22 @@ Radio_action tx_handle_cb(){
 
 uint32_t status_reg, status_regh;
 Radio_action rx_err_handle_cb(){
+  uint16_t N = dwt_read16bitoffsetreg(0xc0000,0x58)& 0xFFF;//N
+  uint32_t C = dwt_read32bitoffsetreg(0xc0000,0x2C)& 0x1FFFF;//C
+  uint8_t dgc=(dwt_read32bitoffsetreg(0x30000,0x60))>>28;//D
+  gpio_set(PORT_DE);
+  gpio_reset(PORT_DE);
+  packet_info_t *payload = rx_packet.payload;
+  report_packet_t rep = {
+    payload->sequence_number,
+    N,
+    C,
+    dgc
+  };
+  send_UART_msg((uint8_t *) &rep, sizeof(rep));
+  printf("ERR: %d,%d,%d\n",ip_diag_1,ip_diag_12,dgc);
+
+
   //if(status_reg & SYS_STATUS_RXFSL_BIT_MASK){
   //    for (int index = 0; index < 500; index++){
   //      dwt_readaccdata(sample, sizeof(sample), index);
@@ -616,20 +634,20 @@ void instance_loop(){
   if (status_reg & SYS_STATUS_ALL_RX_ERR){
     dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_ERR);
     ts2 = m_systick_cnt;
-    printf("%d, %d,", err_counter, ts2-ts1);
-    err_counter++;
-    if(status_reg & SYS_STATUS_RXPHE_BIT_MASK)
-      printf("PHE\n");
-    if(status_reg & SYS_STATUS_RXFCE_BIT_MASK)
-      printf("FCE\n");
-    if(status_reg & SYS_STATUS_RXFSL_BIT_MASK)
-      printf("FSL\n");
-    if(status_reg & SYS_STATUS_RXSTO_BIT_MASK)
-      printf("STO\n");
-    if(status_reg & SYS_STATUS_CIAERR_BIT_MASK)
-      printf("CIA\n");
-    if(status_reg & SYS_STATUS_ARFE_BIT_MASK)
-      printf("aref\n");
+    //printf("%d, %d,", err_counter, ts2-ts1);
+    //err_counter++;
+    //if(status_reg & SYS_STATUS_RXPHE_BIT_MASK)
+    //  printf("PHE\n");
+    //if(status_reg & SYS_STATUS_RXFCE_BIT_MASK)
+    //  printf("FCE\n");
+    //if(status_reg & SYS_STATUS_RXFSL_BIT_MASK)
+    //  printf("FSL\n");
+    //if(status_reg & SYS_STATUS_RXSTO_BIT_MASK)
+    //  printf("STO\n");
+    //if(status_reg & SYS_STATUS_CIAERR_BIT_MASK)
+    //  printf("CIA\n");
+    //if(status_reg & SYS_STATUS_ARFE_BIT_MASK)
+    //  printf("aref\n");
 
     gpio_reset(LED_RX); 
     act = rx_err_handle_cb();
