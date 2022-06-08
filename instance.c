@@ -19,19 +19,100 @@
 #define CIR_SAMPLE 32
 #define CIR_SAMPLE_BUFFER CIR_SAMPLE * 6 + 1
 
-int uart_index = 0;
+int data_index = 0;
 uint8_t UART_msg_payload[200];
-uint8_t UART_byte;
+uint8_t UART_rx_msg_payload[200];
+uint8_t UART_byte, packet_len;
 static nrf_drv_uart_t app_uart_inst = NRF_DRV_UART_INSTANCE(APP_UART_DRIVER_INSTANCE);
+enum State_machine {
+	SYNC_1, SYNC_2, P_LEN, RECV_DATA, DATA_DONE
+};
+enum State_machine state = SYNC_1;
+uint8_t UART_HEADER[] = {0x5c, 0x51};
+uint8_t UART_ACK[] = {0x5c, 0x51, 2, 0, MSG_CONF, 0};
+enum Msg_type{
+    DATA_OK,
+    DATA_ERR,
+    CONFIG,
+    CONFIG_TX,
+    ROLE,
+    START_TX,
+    PACKET_SIZE,
+    SEQ_NUM,
+    TX_NUM,
+    DUMMY,
+    WAIT_TIME,
+    ID,
+    ACK_EN,
+    PLEN64_EN,
+};
+
+
+
+int update_radio_config_flg = 0;
+
+
+
+
 static void uart_event_handler(nrf_drv_uart_event_t * p_event, void* p_context)
 {
     if (p_event->type == NRF_DRV_UART_EVT_RX_DONE)
     {
         if (p_event->data.rxtx.bytes)
         {
-            // Event to notify that data has been received
-            uart_index++;
-            nrf_drv_uart_rx(&app_uart_inst, &UART_byte, 1);
+          
+          switch (state){
+            case SYNC_1:
+            if (UART_byte == UART_HEADER[0]){
+              state = SYNC_2;
+            }
+            break;
+            case SYNC_2:
+              if (UART_byte == UART_HEADER[1])
+                state = P_LEN;
+              else
+                state = SYNC_1;
+              break;
+            case P_LEN:
+              packet_len = UART_byte;
+              data_index = 0;
+              state = RECV_DATA;
+            break;
+            case RECV_DATA:
+              UART_rx_msg_payload[data_index] = UART_byte;
+              data_index++;
+            if (data_index == packet_len){
+              data_index = 0;
+              state = SYNC_1;
+              uint8_t msg_type = UART_rx_msg_payload[0];
+              UART_ACK[sizeof(UART_ACK) - 1] = msg_type;
+              nrf_drv_uart_rx(&app_uart_inst, &UART_byte, 1);
+              uint8_t PAC = UART_rx_msg_payload[1];
+              switch(PAC){
+                case 4:
+                  instance_info.config.radio_config.rxPAC = DWT_PAC4;
+                break;
+                case 8:
+                  instance_info.config.radio_config.rxPAC = DWT_PAC8;
+                break;
+                case 16:
+                  instance_info.config.radio_config.rxPAC = DWT_PAC16;
+                break;
+                case 32:
+                  instance_info.config.radio_config.rxPAC = DWT_PAC32;
+                break;
+              
+              }
+              update_radio_config_flg = 1;
+              send_UART_msg(UART_ACK, sizeof(UART_ACK));
+
+            }
+          }
+
+          nrf_drv_uart_rx(&app_uart_inst, &UART_byte, 1);
+
+            
+            
         }
     }
     else if (p_event->type == NRF_DRV_UART_EVT_ERROR)
@@ -180,7 +261,7 @@ void instance_tx(void){
   tx_packet.sequence_number = instance_info.config.sequence_number;
   packet_info_t *payload = tx_packet.payload;
   payload->sequence_number = instance_info.config.sequence_number;
-  dwt_writetxdata(300, (uint8_t *) &tx_packet, 0);
+  dwt_writetxdata(100, (uint8_t *) &tx_packet, 0);
   dwt_writetxfctrl(instance_info.config.packet_size, 0, 0);
   //n1 = m_systick_cnt;
   //while(m_systick_cnt - n1 < 1000){
@@ -262,6 +343,8 @@ void instance_init(){
 
   while (!dwt_checkidlerc()) /* Need to make sure DW IC is in IDLE_RC before proceeding */
   { };
+  
+  dwt_configciadiag(DW_CIA_DIAG_LOG_ALL);
 
   if (dwt_initialise(DWT_DW_INIT) == DWT_ERROR)
   {
@@ -342,6 +425,7 @@ if (((sample_buffer_size - 1) / 6) != cir_array_size)
 return true;
 }
 
+uint8_t ip_diag1[4];
 
 Radio_action rx_handle_cb(){
   bool res;
@@ -363,6 +447,20 @@ Radio_action rx_handle_cb(){
   //  }
   //}
   //send_UART_msg((uint8_t *) &cir[1400], 2400);
+  dwt_rxdiag_t diagnostics;
+  dwt_readdiagnostics(&diagnostics);
+  
+
+    dwt_rxdiag_t diagnostics2;
+  dwt_readdiagnostics2(&diagnostics2);
+
+  uint16_t ip_diag_1= dwt_read16bitoffsetreg(0xc0000,0x58)& 0xFFF;//C
+  uint32_t ip_diag_12= dwt_read32bitoffsetreg(0xc0000,0x2C)& 0x1FFFF;//N
+  uint32_t dgc=(dwt_read32bitoffsetreg(0x30000,0x60))>>28;//D
+  printf("%d,%d,%d\n",ip_diag_1,ip_diag_12,dgc);
+  printf("%d, %d\n", diagnostics.ipatovAccumCount,  diagnostics2.ipatovAccumCount);
+  //uint32_t pwr = 
+  dwt_readfromdevice(IP_TOA_LO_ID,IP_DIAG_1_ID - IP_TOA_LO_ID,IP_DIAG_1_LEN,ip_diag1);
   dwt_readrxdata( &rx_packet, 40, 0);
   dwt_readrxdata( (uint8_t *)(&rx_packet) + 40, 40, 40);
   if (identity_get_operations() & IDENTITY_OPERATIONS_DATA_RX){
@@ -442,6 +540,30 @@ Radio_action rx_err_handle_cb(){
 Radio_action cca_fail_handle_cb(){
   return ACTION_TX;
 }
+
+void update_radio_config(){
+  port_set_dw_ic_spi_fastrate();
+  /* Reset DW IC */
+  reset_DWIC(); /* Target specific drive of RSTn line into DW IC low for a period. */
+  Sleep(2); // Time needed for DW3000 to start up (transition from INIT_RC to IDLE_RC, or could wait for SPIRDY event)
+
+  while (!dwt_checkidlerc()) /* Need to make sure DW IC is in IDLE_RC before proceeding */
+  { };
+
+  if (dwt_initialise(DWT_DW_INIT) == DWT_ERROR)
+  {
+      while (1)
+      { };
+  }
+  if(dwt_configure(&instance_info.config.radio_config)){
+    printf("config failed\n");
+  
+  }else{
+    printf("config successful\n");
+  }
+  instance_rx();
+}
+
 
 
 uint32_t ts1, ts2;
@@ -536,6 +658,11 @@ void instance_loop(){
     //Sleep(1);
     //gpio_set(LED_TX);
     instance_tx();
+  }
+  if(update_radio_config_flg){
+    update_radio_config_flg = 0;
+    update_radio_config();
+    
   }
 
 }

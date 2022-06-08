@@ -19,8 +19,8 @@ instance_info_t instance_info;
 
 dwt_config_t radio_config = {
     5,               /* Channel number. */
-    DWT_PLEN_128,    /* Preamble length. Used in TX only. */
-    DWT_PAC8,        /* Preamble acquisition chunk size. Used in RX only. */
+    DWT_PLEN_1024,    /* Preamble length. Used in TX only. */
+    DWT_PAC4,        /* Preamble acquisition chunk size. Used in RX only. */
     9,               /* TX preamble code. Used in TX only. */
     9,               /* RX preamble code. Used in RX only. */
     1,               /* 0 to use standard 8 symbol SFD, 1 to use non-standard 8 symbol, 2 for non-standard 16 symbol SFD and 3 for 4z 8 symbol SDF type */
@@ -48,28 +48,16 @@ void instance_config_identity_init() {
   uint32_t dev_id = NRF_FICR->DEVICEADDR[0];
   init_config(); 
   switch(dev_id){
-    case 4113761924:
-      identity_set_address(0x0001);
-      identity_set_role(ROLE_TS);
-      instance_info.config.tx_number = 200;
-      radio_config.txCode = 9;
-    break;
-    //case 153137759:
-    //  identity_set_address(0x0002);
-    //  identity_set_role(ROLE_TX_TS);
-    //  instance_info.config.tx_after_rx_wait = 1500;
-    //  radio_config.txCode = 10;
-    //break;
-    //case 1697349500:
-    //  identity_set_address(0x0003);
-    //  identity_set_role(ROLE_TX);
-    //  instance_info.config.IPI_wait = 1000;
-    //  radio_config.txCode = 11;
-    //  instance_info.config.tx_number=0;
-    //break;
     case 1649967333:
-      identity_set_role(ROLE_RX);
+      identity_set_address(0x0001);
+      
+      instance_info.config.tx_number = 0;
+      radio_config.txCode = 9;
+      identity_set_role(ROLE_TS);
+    break;
+    case 153137759:
       radio_config.rxCode = 9;
+      identity_set_role(ROLE_RX);
     break;
       
 
@@ -105,7 +93,7 @@ void identity_set_role(Role role) {
 }
 
 void init_config() {
-  instance_info.config.radio_config = radio_config;
+  
   instance_info.config.packet_size = 300;
   if (identity_get_operations() & IDENTITY_OPERATIONS_CONSTANT_TX)
     instance_info.config.tx_number = TX_PKT_CNT;
@@ -119,10 +107,13 @@ void init_config() {
 }
 
 void configure_node() {
+  instance_info.config.radio_config = radio_config;
   if(dwt_configure(&radio_config)) {
+    printf("Failed\n");
     while (1)
     { };
   }
   dwt_configuretxrf(&txconfig);
+  printf("conf done\n");
 }
 

@@ -18,6 +18,7 @@ typedef  struct{
 
 #define MSG_TIME_SYNC					0x76
 #define MSG_DATA                                        0xDA
+#define MSG_CONF				        0xC0
 
 
 #define LED_RX GPIO_DIR_GDP2_BIT_MASK

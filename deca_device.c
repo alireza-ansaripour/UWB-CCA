@@ -2275,6 +2275,226 @@ void dwt_readdiagnostics(dwt_rxdiag_t *diagnostics)
     }
 }
 
+
+
+void dwt_readdiagnostics2(dwt_rxdiag_t *diagnostics)
+{
+    int i;
+    int offset_0xd;
+    int offset_buff = BUF0_RX_FINFO;
+    uint8_t temp[DB_MAX_DIAG_SIZE];  //address from 0xC0000 to 0xD0068 (108*2 bytes) - when using normal mode, or 232 length for max logging when in Double Buffer mode
+
+    //minimal diagnostics - 40 bytes
+
+    switch (pdw3000local->dblbuffon) //check if in double buffer mode and if so which buffer host is currently accessing
+    {
+    case DBL_BUFF_ACCESS_BUFFER_1:
+        offset_buff = BUF1_RX_FINFO;
+        __attribute__ ((fallthrough));
+        //no break
+    case DBL_BUFF_ACCESS_BUFFER_0:
+
+        if (pdw3000local->dblbuffon == DBL_BUFF_ACCESS_BUFFER_1)
+        {
+            /* Program the indirect offset registers B for specified offset to swinging set buffer B */
+            //!!! Assumes that Indirect pointer register B was already set. This is done in the dwt_setdblrxbuffmode when mode is enabled.
+            /* Indirectly read data from the IC to the buffer */
+            if (pdw3000local->cia_diagnostic & DW_CIA_DIAG_LOG_MAX)
+            {
+                dwt_readfromdevice(INDIRECT_POINTER_B_ID, 0, DB_MAX_DIAG_SIZE, temp);
+            }
+            else if (pdw3000local->cia_diagnostic & DW_CIA_DIAG_LOG_MID)
+            {
+                dwt_readfromdevice(INDIRECT_POINTER_B_ID, 0, DB_MID_DIAG_SIZE, temp);
+            }
+            else
+            {
+                dwt_readfromdevice(INDIRECT_POINTER_B_ID, 0, DB_MIN_DIAG_SIZE, temp);
+            }
+        }
+        else
+        {
+            if (pdw3000local->cia_diagnostic & DW_CIA_DIAG_LOG_MAX)
+            {
+                dwt_readfromdevice(offset_buff, 0, DB_MAX_DIAG_SIZE, temp);
+            }
+            else if (pdw3000local->cia_diagnostic & DW_CIA_DIAG_LOG_MID)
+            {
+                dwt_readfromdevice(offset_buff, 0, DB_MID_DIAG_SIZE, temp);
+            }
+            else
+            {
+                dwt_readfromdevice(offset_buff, 0, DB_MIN_DIAG_SIZE, temp);
+            }
+        }
+
+        for (i = 0; i < (CIA_I_RX_TIME_LEN+1); i++)
+        {
+            diagnostics->tdoa[i] = temp[i + BUF0_TDOA - BUF0_RX_FINFO]; // timestamp difference of the 2 STS RX timestamps
+        }
+
+        diagnostics->xtalOffset = ((int16_t)temp[BUF0_CIA_DIAG_0 - BUF0_RX_FINFO + 1] << 8 | temp[BUF0_CIA_DIAG_0 - BUF0_RX_FINFO]) & 0x1FFF;                   // Estimated xtal offset of remote device
+
+        diagnostics->pdoa = ((int16_t)temp[BUF0_PDOA - BUF0_RX_FINFO + 3] << 8 | temp[BUF0_PDOA - BUF0_RX_FINFO + 2]) & 0x3FFF;           // phase difference of the 2 STS POAs (signed in [1:-11])
+        if (diagnostics->pdoa & 0x2000) diagnostics->pdoa |= 0xC000; //sign extend
+
+        diagnostics->ipatovAccumCount = ((uint16_t)temp[BUF0_IP_DIAG_12 - BUF0_RX_FINFO + 1] << 8 | temp[BUF0_IP_DIAG_12 - BUF0_RX_FINFO]) & 0xFFF;       // Number accumulated symbols [11:0] for Ipatov sequence
+
+        if (pdw3000local->cia_diagnostic & DW_CIA_DIAG_LOG_MIN)
+            break;
+
+        for (i = 0; i < CIA_I_RX_TIME_LEN; i++)
+        {
+            diagnostics->ipatovRxTime[i] = temp[i + BUF0_IP_TS - BUF0_RX_FINFO];  // RX timestamp from Ipatov sequence
+            diagnostics->stsRxTime[i] = temp[i + BUF0_STS_TS - BUF0_RX_FINFO];    // RX timestamp from STS
+            diagnostics->sts2RxTime[i] = temp[i + BUF0_STS1_TS - BUF0_RX_FINFO];  // RX timestamp from STS1
+        }
+        diagnostics->ipatovRxStatus = temp[BUF0_IP_TS - BUF0_RX_FINFO + CIA_C_STAT_OFFSET];        // RX status info for Ipatov sequence
+        diagnostics->ipatovPOA = (uint16_t)temp[BUF0_IP_TS - BUF0_RX_FINFO + 2] << 8 | temp[BUF0_IP_TS - BUF0_RX_FINFO + 1]; // Phase of arrival as computed from the Ipatov CIR (signed rad*2-12)
+
+        diagnostics->stsRxStatus = temp[BUF0_STS_TS - BUF0_RX_FINFO + CIA_C_STAT_OFFSET];       // RX status info for STS
+        diagnostics->stsPOA = (uint16_t)temp[BUF0_STS_TS - BUF0_RX_FINFO + 2] << 8 | temp[BUF0_STS_TS - BUF0_RX_FINFO + 1]; // Phase of arrival as computed from the STS 1 CIR (signed rad*2-12)
+
+        diagnostics->sts2RxStatus = temp[BUF0_STS1_TS - BUF0_RX_FINFO + CIA_C_STAT_OFFSET];       // RX status info for STS1
+        diagnostics->sts2POA = (uint16_t)temp[BUF0_STS1_TS - BUF0_RX_FINFO + 2] << 8 | temp[BUF0_STS1_TS - BUF0_RX_FINFO + 1]; // Phase of arrival as computed from the STS 1 CIR (signed rad*2-12)
+
+        if (pdw3000local->cia_diagnostic & DW_CIA_DIAG_LOG_MID)
+            break;
+
+        diagnostics->ciaDiag1 = ((uint32_t)temp[BUF0_CIA_DIAG_1 - BUF0_RX_FINFO + 3] << 24 | (uint32_t)temp[BUF0_CIA_DIAG_1 - BUF0_RX_FINFO + 2] << 16
+            | (uint32_t)temp[BUF0_CIA_DIAG_1 - BUF0_RX_FINFO + 1] << 8 | (uint32_t)temp[BUF0_CIA_DIAG_1 - BUF0_RX_FINFO]) & 0x1FFFFFFF; // Diagnostics common to both sequences (carrier integrator [28:8] and resampler delay [7:0])
+
+                                                                                                                          //IP
+        diagnostics->ipatovPeak = ((uint32_t)temp[BUF0_IP_DIAG_0 - BUF0_RX_FINFO + 3] << 24 | (uint32_t)temp[BUF0_IP_DIAG_0 - BUF0_RX_FINFO + 2] << 16
+            | (uint32_t)temp[BUF0_IP_DIAG_0 - BUF0_RX_FINFO + 1] << 8 | (uint32_t)temp[BUF0_IP_DIAG_0 - BUF0_RX_FINFO]) & 0x7FFFFFFF;  // index [30:21] and amplitude [20:0] of peak sample in Ipatov sequence CIR
+        diagnostics->ipatovPower = ((uint32_t)temp[BUF0_IP_DIAG_1 - BUF0_RX_FINFO + 3] << 24 | (uint32_t)temp[BUF0_IP_DIAG_1 - BUF0_RX_FINFO + 2] << 16
+            | (uint32_t)temp[BUF0_IP_DIAG_1 - BUF0_RX_FINFO + 1] << 8 | (uint32_t)temp[BUF0_IP_DIAG_1 - BUF0_RX_FINFO]) & 0x1FFFF;     // channel area allows estimation [16:0] of channel power for the Ipatov sequence
+        diagnostics->ipatovF1 = ((uint32_t)temp[BUF0_IP_DIAG_2 - BUF0_RX_FINFO + 3] << 24 | (uint32_t)temp[BUF0_IP_DIAG_2 - BUF0_RX_FINFO + 2] << 16
+            | (uint32_t)temp[BUF0_IP_DIAG_2 - BUF0_RX_FINFO + 1] << 8 | (uint32_t)temp[BUF0_IP_DIAG_2 - BUF0_RX_FINFO]) & 0x3FFFFF;    // F1 for Ipatov sequence [21:0]
+        diagnostics->ipatovF2 = ((uint32_t)temp[BUF0_IP_DIAG_3 - BUF0_RX_FINFO + 3] << 24 | (uint32_t)temp[BUF0_IP_DIAG_3 - BUF0_RX_FINFO + 2] << 16
+            | (uint32_t)temp[BUF0_IP_DIAG_3 - BUF0_RX_FINFO + 1] << 8 | (uint32_t)temp[BUF0_IP_DIAG_3 - BUF0_RX_FINFO]) & 0x3FFFFF;    // F2 for Ipatov sequence [21:0]
+        diagnostics->ipatovF3 = ((uint32_t)temp[BUF0_IP_DIAG_4 - BUF0_RX_FINFO + 3] << 24 | (uint32_t)temp[BUF0_IP_DIAG_4 - BUF0_RX_FINFO + 2] << 16
+            | (uint32_t)temp[BUF0_IP_DIAG_4 - BUF0_RX_FINFO + 1] << 8 | (uint32_t)temp[BUF0_IP_DIAG_4 - BUF0_RX_FINFO]) & 0x3FFFFF;    // F3 for Ipatov sequence [21:0]
+        diagnostics->ipatovFpIndex = (uint16_t)temp[BUF0_IP_DIAG_8 - BUF0_RX_FINFO + 1] << 8 | temp[BUF0_IP_DIAG_8 - BUF0_RX_FINFO];              // First path index [15:0] for Ipatov sequence
+        
+                                                                                                                                                  //CP 1
+        diagnostics->stsPeak = ((uint32_t)temp[BUF0_STS_DIAG_0 - BUF0_RX_FINFO + 3] << 24 | (uint32_t)temp[BUF0_STS_DIAG_0 - BUF0_RX_FINFO + 2] << 16
+            | (uint32_t)temp[BUF0_STS_DIAG_0 - BUF0_RX_FINFO + 1] << 8 | (uint32_t)temp[BUF0_STS_DIAG_0 - BUF0_RX_FINFO]) & 0x3FFFFFFF; // index [29:21] and amplitude [20:0] of peak sample in STS CIR
+        diagnostics->stsPower = ((uint16_t)temp[BUF0_STS_DIAG_1 - BUF0_RX_FINFO + 1] << 8 | temp[BUF0_STS_DIAG_1 - BUF0_RX_FINFO]);           // channel area allows estimation of channel power for the STS
+        diagnostics->stsF1 = ((uint32_t)temp[BUF0_STS_DIAG_2 - BUF0_RX_FINFO + 3] << 24 | (uint32_t)temp[BUF0_STS_DIAG_2 - BUF0_RX_FINFO + 2] << 16
+            | (uint32_t)temp[BUF0_STS_DIAG_2 - BUF0_RX_FINFO + 1] << 8 | (uint32_t)temp[BUF0_STS_DIAG_2 - BUF0_RX_FINFO]) & 0x3FFFFF; // F1 for STS [21:0]
+        diagnostics->stsF2 = ((uint32_t)temp[BUF0_STS_DIAG_3 - BUF0_RX_FINFO + 3] << 24 | (uint32_t)temp[BUF0_STS_DIAG_3 - BUF0_RX_FINFO + 2] << 16
+            | (uint32_t)temp[BUF0_STS_DIAG_3 - BUF0_RX_FINFO + 1] << 8 | (uint32_t)temp[BUF0_STS_DIAG_3 - BUF0_RX_FINFO]) & 0x3FFFFF; // F2 for STS [21:0]
+        diagnostics->stsF3 = ((uint32_t)temp[BUF0_STS_DIAG_4 - BUF0_RX_FINFO + 3] << 24 | (uint32_t)temp[BUF0_STS_DIAG_4 - BUF0_RX_FINFO + 2] << 16
+            | (uint32_t)temp[BUF0_STS_DIAG_4 - BUF0_RX_FINFO + 1] << 8 | (uint32_t)temp[BUF0_STS_DIAG_4 - BUF0_RX_FINFO]) & 0x3FFFFF; // F3 for STS [21:0]
+        diagnostics->stsFpIndex = ((uint16_t)temp[BUF0_STS_DIAG_8 - BUF0_RX_FINFO + 1] << 8 | temp[BUF0_STS_DIAG_8 - BUF0_RX_FINFO]) & 0x7FFF;   // First path index [14:0] for STS
+        diagnostics->stsAccumCount = ((uint16_t)temp[BUF0_STS_DIAG_12 - BUF0_RX_FINFO + 1] << 8 | temp[BUF0_STS_DIAG_12 - BUF0_RX_FINFO]) & 0xFFF;   // Number accumulated symbols [11:0] for STS
+
+                                                                                                                                                //CP 2
+        diagnostics->sts2Peak = ((uint32_t)temp[BUF0_STS1_DIAG_0 - BUF0_RX_FINFO + 3] << 24 | (uint32_t)temp[BUF0_STS1_DIAG_0 - BUF0_RX_FINFO + 2] << 16
+            | (uint32_t)temp[BUF0_STS1_DIAG_0 - BUF0_RX_FINFO + 1] << 8 | (uint32_t)temp[BUF0_STS1_DIAG_0 - BUF0_RX_FINFO]) & 0x3FFFFFFF; // index [29:21] and amplitude [20:0] of peak sample in STS CIR
+        diagnostics->sts2Power = ((uint16_t)temp[BUF0_STS1_DIAG_1 - BUF0_RX_FINFO + 1] << 8 | temp[BUF0_STS1_DIAG_1 - BUF0_RX_FINFO]);           // channel area allows estimation of channel power for the STS
+        diagnostics->sts2F1 = ((uint32_t)temp[BUF0_STS1_DIAG_2 - BUF0_RX_FINFO + 3] << 24 | (uint32_t)temp[BUF0_STS1_DIAG_2 - BUF0_RX_FINFO + 2] << 16
+            | (uint32_t)temp[BUF0_STS1_DIAG_2 - BUF0_RX_FINFO + 1] << 8 | (uint32_t)temp[BUF0_STS1_DIAG_2 - BUF0_RX_FINFO]) & 0x3FFFFF; // F1 for STS [21:0]
+        diagnostics->sts2F2 = ((uint32_t)temp[BUF0_STS1_DIAG_3 - BUF0_RX_FINFO + 3] << 24 | (uint32_t)temp[BUF0_STS1_DIAG_3 - BUF0_RX_FINFO + 2] << 16
+            | (uint32_t)temp[BUF0_STS1_DIAG_3 - BUF0_RX_FINFO + 1] << 8 | (uint32_t)temp[BUF0_STS1_DIAG_3 - BUF0_RX_FINFO]) & 0x3FFFFF; // F2 for STS [21:0]
+        diagnostics->sts2F3 = ((uint32_t)temp[BUF0_STS1_DIAG_4 - BUF0_RX_FINFO + 3] << 24 | (uint32_t)temp[BUF0_STS1_DIAG_4 - BUF0_RX_FINFO + 2] << 16
+            | (uint32_t)temp[BUF0_STS1_DIAG_4 - BUF0_RX_FINFO + 1] << 8 | (uint32_t)temp[BUF0_STS1_DIAG_4 - BUF0_RX_FINFO]) & 0x3FFFFF; // F3 for STS [21:0]
+        diagnostics->sts2FpIndex = ((uint16_t)temp[BUF0_STS1_DIAG_8 - BUF0_RX_FINFO + 1] << 8 | temp[BUF0_STS1_DIAG_8 - BUF0_RX_FINFO]) & 0x7FFF;   // First path index [14:0] for STS
+        diagnostics->sts2AccumCount = ((uint16_t)temp[BUF0_STS1_DIAG_12 - BUF0_RX_FINFO + 1] << 8 | temp[BUF0_STS1_DIAG_12 - BUF0_RX_FINFO]) & 0xFFF;   // Number accumulated symbols [11:0] for STS
+
+
+
+        break;
+
+    default:  //double buffer is off
+
+        if (pdw3000local->cia_diagnostic & DW_CIA_DIAG_LOG_ALL)
+        {
+            dwt_readfromdevice(0x0000000c, 0, 108, temp);   //read form 0xC0000 space  (108 bytes)
+            dwt_readfromdevice(STS_DIAG_4_ID, 0, 108, &temp[108]);  //read from 0xD0000 space  (108 bytes)
+        }
+        else
+        {
+            dwt_readfromdevice(IP_TOA_LO_ID, 0, 40, temp);
+        }
+
+        for (i = 0; i < CIA_I_RX_TIME_LEN; i++)
+        {
+            diagnostics->ipatovRxTime[i] = temp[i];                                 // RX timestamp from Ipatov sequence
+            diagnostics->stsRxTime[i] = temp[i + STS_TOA_LO_ID - IP_TOA_LO_ID];  // RX timestamp from STS
+            diagnostics->sts2RxTime[i] = temp[i + STS1_TOA_LO_ID - IP_TOA_LO_ID]; // RX timestamp from STS1
+            diagnostics->tdoa[i] = temp[i + CIA_TDOA_0_ID - IP_TOA_LO_ID]; // timestamp difference of the 2 STS RX timestamps
+        }
+        diagnostics->tdoa[5] = temp[5 + CIA_TDOA_0_ID - IP_TOA_LO_ID];
+
+        diagnostics->ipatovRxStatus = temp[IP_TOA_HI_ID - IP_TOA_LO_ID + CIA_I_STAT_OFFSET];        // RX status info for Ipatov sequence
+        diagnostics->ipatovPOA = (uint16_t)temp[IP_TOA_HI_ID - IP_TOA_LO_ID + 2] << 8 | temp[IP_TOA_HI_ID - IP_TOA_LO_ID + 1]; // Phase of arrival as computed from the Ipatov CIR (signed rad*2-12)
+
+        diagnostics->stsRxStatus = ((uint16_t)temp[STS_TOA_HI_ID - IP_TOA_LO_ID + CIA_C_STAT_OFFSET + 1] | temp[STS_TOA_HI_ID - IP_TOA_LO_ID + CIA_C_STAT_OFFSET]) >> 7;       // RX status info for STS
+        diagnostics->stsPOA = (uint16_t)temp[STS_TOA_HI_ID - IP_TOA_LO_ID + 2] << 8 | temp[STS_TOA_HI_ID - IP_TOA_LO_ID + 1]; // Phase of arrival as computed from the STS 1 CIR (signed rad*2-12)
+
+        diagnostics->sts2RxStatus = ((uint16_t)temp[STS1_TOA_HI_ID - IP_TOA_LO_ID + CIA_C_STAT_OFFSET+ 1] | temp[STS_TOA_HI_ID - IP_TOA_LO_ID + CIA_C_STAT_OFFSET]) >> 7;       // RX status info for STS
+        diagnostics->sts2POA = (uint16_t)temp[STS1_TOA_HI_ID - IP_TOA_LO_ID + 2] << 8 | temp[STS1_TOA_HI_ID - IP_TOA_LO_ID + 1]; // Phase of arrival as computed from the STS 1 CIR (signed rad*2-12)
+
+        diagnostics->pdoa = ((int16_t)temp[CIA_TDOA_1_PDOA_ID - IP_TOA_LO_ID + 3] << 8 | temp[CIA_TDOA_1_PDOA_ID - IP_TOA_LO_ID + 2]) & 0x3FFF;           // phase difference of the 2 STS POAs (signed in [1:-11])
+        if (diagnostics->pdoa & 0x2000) diagnostics->pdoa |= 0xC000; //sign extend
+
+        diagnostics->xtalOffset = ((int16_t)temp[CIA_DIAG_0_ID - IP_TOA_LO_ID + 1] << 8 | temp[CIA_DIAG_0_ID - IP_TOA_LO_ID]) & 0x1FFF;                   // Estimated xtal offset of remote device
+
+        diagnostics->ciaDiag1 = ((uint32_t) temp[CIA_DIAG_1_ID - IP_TOA_LO_ID + 3] << 24 | (uint32_t)temp[CIA_DIAG_1_ID - IP_TOA_LO_ID + 2] << 16
+            | (uint32_t)temp[CIA_DIAG_1_ID - IP_TOA_LO_ID + 1] << 8 | (uint32_t)temp[CIA_DIAG_1_ID - IP_TOA_LO_ID]) & 0x1FFFFFFF; // Diagnostics common to both sequences
+
+        if ((pdw3000local->cia_diagnostic & DW_CIA_DIAG_LOG_ALL) == 0)
+            break; //break here is only logging minimal diagnositcs
+
+        //IP
+        diagnostics->ipatovPeak = ((uint32_t)temp[IP_DIAG_0_ID - IP_TOA_LO_ID + 3] << 24 | (uint32_t)temp[IP_DIAG_0_ID - IP_TOA_LO_ID + 2] << 16
+            | (uint32_t)temp[IP_DIAG_0_ID - IP_TOA_LO_ID + 1] << 8 | (uint32_t)temp[IP_DIAG_0_ID - IP_TOA_LO_ID]) & 0x7FFFFFFF;  // index [30:21] and amplitude [20:0] of peak sample in Ipatov sequence CIR
+        diagnostics->ipatovPower = ((uint32_t)temp[IP_DIAG_1_ID - IP_TOA_LO_ID + 3] << 24 | (uint32_t)temp[IP_DIAG_1_ID - IP_TOA_LO_ID + 2] << 16
+            | (uint32_t)temp[IP_DIAG_1_ID - IP_TOA_LO_ID + 1] << 8 | (uint32_t)temp[IP_DIAG_1_ID - IP_TOA_LO_ID]) & 0x1FFFF;     // channel area allows estimation [16:0] of channel power for the Ipatov sequence
+        diagnostics->ipatovF1 = ((uint32_t)temp[IP_DIAG_2_ID - IP_TOA_LO_ID + 3] << 24 | (uint32_t)temp[IP_DIAG_2_ID - IP_TOA_LO_ID + 2] << 16
+            | (uint32_t)temp[IP_DIAG_2_ID - IP_TOA_LO_ID + 1] << 8 | (uint32_t)temp[IP_DIAG_2_ID - IP_TOA_LO_ID]) & 0x3FFFFF;    // F1 for Ipatov sequence [21:0]
+        diagnostics->ipatovF2 = ((uint32_t)temp[IP_DIAG_3_ID - IP_TOA_LO_ID + 3] << 24 | (uint32_t)temp[IP_DIAG_3_ID - IP_TOA_LO_ID + 2] << 16
+            | (uint32_t)temp[IP_DIAG_3_ID - IP_TOA_LO_ID + 1] << 8 | (uint32_t)temp[IP_DIAG_3_ID - IP_TOA_LO_ID]) & 0x3FFFFF;    // F2 for Ipatov sequence [21:0]
+        diagnostics->ipatovF3 = ((uint32_t)temp[IP_DIAG_4_ID - IP_TOA_LO_ID + 3] << 24 | (uint32_t)temp[IP_DIAG_4_ID - IP_TOA_LO_ID + 2] << 16
+            | (uint32_t)temp[IP_DIAG_4_ID - IP_TOA_LO_ID + 1] << 8 | (uint32_t)temp[IP_DIAG_4_ID - IP_TOA_LO_ID]) & 0x3FFFFF;    // F3 for Ipatov sequence [21:0]
+        diagnostics->ipatovFpIndex = (uint16_t)temp[IP_DIAG_8_ID - IP_TOA_LO_ID + 1] << 8 | temp[IP_DIAG_8_ID - IP_TOA_LO_ID];              // First path index [15:0] for Ipatov sequence
+        diagnostics->ipatovAccumCount = ((uint16_t)temp[IP_DIAG_12_ID - IP_TOA_LO_ID + 1] << 8 | temp[IP_DIAG_12_ID - IP_TOA_LO_ID]) & 0xFFF;       // Number accumulated symbols [11:0] for Ipatov sequence
+
+        //STS 1
+        diagnostics->stsPeak = ((uint32_t)temp[STS_DIAG_0_ID - IP_TOA_LO_ID + 3] << 24 | (uint32_t)temp[STS_DIAG_0_ID - IP_TOA_LO_ID + 2] << 16
+            | (uint32_t)temp[STS_DIAG_0_ID - IP_TOA_LO_ID + 1] << 8 | (uint32_t)temp[STS_DIAG_0_ID - IP_TOA_LO_ID]) & 0x3FFFFFFF; // index [29:21] and amplitude [20:0] of peak sample in STS CIR
+        diagnostics->stsPower = ((uint16_t)temp[STS_DIAG_1_ID - IP_TOA_LO_ID + 1] << 8 | temp[STS_DIAG_1_ID - IP_TOA_LO_ID]);           // channel area allows estimation of channel power for the STS
+        diagnostics->stsF1 = ((uint32_t)temp[STS_DIAG_2_ID - IP_TOA_LO_ID + 3] << 24 | (uint32_t)temp[STS_DIAG_2_ID - IP_TOA_LO_ID + 2] << 16
+            | (uint32_t)temp[STS_DIAG_2_ID - IP_TOA_LO_ID + 1] << 8 | (uint32_t)temp[STS_DIAG_2_ID - IP_TOA_LO_ID]) & 0x3FFFFF; // F1 for STS [21:0]
+        diagnostics->stsF2 = ((uint32_t)temp[STS_DIAG_3_ID - IP_TOA_LO_ID + 3] << 24 | (uint32_t)temp[STS_DIAG_3_ID - IP_TOA_LO_ID + 2] << 16
+            | (uint32_t)temp[STS_DIAG_3_ID - IP_TOA_LO_ID + 1] << 8 | (uint32_t)temp[STS_DIAG_3_ID - IP_TOA_LO_ID]) & 0x3FFFFF; // F2 for STS [21:0]
+
+
+        offset_0xd = 0x6c; // there are 0x6C bytes in 0xC0000 base before we enter 0xD0000
+
+        diagnostics->stsF3 = ((uint32_t)temp[STS_DIAG_4_ID - STS_DIAG_4_ID + offset_0xd + 3] << 24 | (uint32_t)temp[STS_DIAG_4_ID - STS_DIAG_4_ID + offset_0xd + 2] << 16
+            | (uint32_t)temp[STS_DIAG_4_ID - STS_DIAG_4_ID + offset_0xd + 1] << 8 | (uint32_t)temp[STS_DIAG_4_ID - STS_DIAG_4_ID + offset_0xd]) & 0x3FFFFF; // F3 for STS [21:0]
+        diagnostics->stsFpIndex = ((uint16_t)temp[STS_DIAG_8_ID - STS_DIAG_4_ID + offset_0xd + 1] << 8 | temp[STS_DIAG_8_ID - STS_DIAG_4_ID + offset_0xd]) & 0x7FFF;   // First path index [14:0] for STS
+        diagnostics->stsAccumCount = ((uint16_t)temp[STS_DIAG_12_ID - STS_DIAG_4_ID + offset_0xd + 1] << 8 | temp[STS_DIAG_12_ID - STS_DIAG_4_ID + offset_0xd]) & 0xFFF;   // Number accumulated symbols [11:0] for STS
+
+        //STS 2
+        diagnostics->sts2Peak = ((uint32_t)temp[STS1_DIAG_0_ID - STS_DIAG_4_ID + offset_0xd + 3] << 24 | (uint32_t)temp[STS1_DIAG_0_ID - STS_DIAG_4_ID + offset_0xd + 2] << 16
+            | (uint32_t)temp[STS1_DIAG_0_ID - STS_DIAG_4_ID + offset_0xd + 1] << 8 | (uint32_t)temp[STS1_DIAG_0_ID - STS_DIAG_4_ID + offset_0xd]) & 0x3FFFFFFF; // index [29:21] and amplitude [20:0] of peak sample in STS CIR
+        diagnostics->sts2Power = ((uint16_t)temp[STS1_DIAG_1_ID - STS_DIAG_4_ID + offset_0xd + 1] << 8 | temp[STS1_DIAG_1_ID - STS_DIAG_4_ID + offset_0xd]);           // channel area allows estimation of channel power for the STS
+        diagnostics->sts2F1 = ((uint32_t)temp[STS1_DIAG_2_ID - STS_DIAG_4_ID + offset_0xd + 3] << 24 | (uint32_t)temp[STS1_DIAG_2_ID - STS_DIAG_4_ID + offset_0xd + 2] << 16
+            | (uint32_t)temp[STS1_DIAG_2_ID - STS_DIAG_4_ID + offset_0xd + 1] << 8 | (uint32_t)temp[STS1_DIAG_2_ID - STS_DIAG_4_ID + offset_0xd]) & 0x3FFFFF; // F1 for STS [21:0]
+        diagnostics->sts2F2 = ((uint32_t)temp[STS1_DIAG_3_ID - STS_DIAG_4_ID + offset_0xd + 3] << 24 | (uint32_t)temp[STS1_DIAG_3_ID - STS_DIAG_4_ID + offset_0xd + 2] << 16
+            | (uint32_t)temp[STS1_DIAG_3_ID - STS_DIAG_4_ID + offset_0xd + 1] << 8 | (uint32_t)temp[STS1_DIAG_3_ID - STS_DIAG_4_ID + offset_0xd]) & 0x3FFFFF; // F2 for STS [21:0]
+        diagnostics->sts2F3 = ((uint32_t)temp[STS1_DIAG_4_ID - STS_DIAG_4_ID + offset_0xd + 3] << 24 | (uint32_t)temp[STS1_DIAG_4_ID - STS_DIAG_4_ID + offset_0xd + 2] << 16
+            | (uint32_t)temp[STS1_DIAG_4_ID - STS_DIAG_4_ID + offset_0xd + 1] << 8 | (uint32_t)temp[STS1_DIAG_4_ID - STS_DIAG_4_ID + offset_0xd]) & 0x3FFFFF; // F3 for STS [21:0]
+        diagnostics->sts2FpIndex = ((uint16_t)temp[STS1_DIAG_8_ID - STS_DIAG_4_ID + offset_0xd + 1] << 8 | temp[STS1_DIAG_8_ID - STS_DIAG_4_ID + offset_0xd]) & 0x7FFF;   // First path index [14:0] for STS
+        diagnostics->sts2AccumCount = ((uint16_t)temp[STS1_DIAG_12_ID - STS_DIAG_4_ID + offset_0xd + 1] << 8 | temp[STS1_DIAG_12_ID - STS_DIAG_4_ID + offset_0xd]) & 0xFFF;   // Number accumulated symbols [11:0] for STS
+        break;
+    }
+}
+
 /*! ------------------------------------------------------------------------------------------------------------------
  * @brief This is used to read the TX timestamp (adjusted with the programmed antenna delay)
  *
