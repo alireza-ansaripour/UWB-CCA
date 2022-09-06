@@ -13,9 +13,11 @@
 #include "util.h"
 #include "instance_config.h"
 #include "ring_buffer.h"
+#include "shared_defines.h"
 #include "mac_802_15_4.h"
 #include "nrf_drv_uart.h"
-
+#include "messages.h"
+#include "uwb_messages.h"
 #define CIR_SAMPLE 32
 #define CIR_SAMPLE_BUFFER CIR_SAMPLE * 6 + 1
 
@@ -23,35 +25,51 @@ int data_index = 0;
 uint8_t UART_msg_payload[200];
 uint8_t UART_rx_msg_payload[200];
 uint8_t UART_byte, packet_len;
+static uint64_t m_systick_cnt;
+uint64_t get_tx_timestamp_u64(void);
+uint64_t get_rx_timestamp_u64(void);
 static nrf_drv_uart_t app_uart_inst = NRF_DRV_UART_INSTANCE(APP_UART_DRIVER_INSTANCE);
 enum State_machine {
-	SYNC_1, SYNC_2, P_LEN, RECV_DATA, DATA_DONE
+  SYNC_1, SYNC_2, P_LEN, RECV_DATA, DATA_DONE
 };
+
+void set_dwt_config(dwt_config_t *config){
+  memcpy(&instance_info.config.radio_config, config, sizeof(dwt_config_t));
+  instance_info.node.update_radio_config = 1;
+}
+
 enum State_machine state = SYNC_1;
-uint8_t UART_HEADER[] = {0x5c, 0x51};
-uint8_t UART_ACK[] = {0x5c, 0x51, 2, 0, MSG_CONF, 0};
-enum Msg_type{
-    DATA_OK,
-    DATA_ERR,
-    CONFIG,
-    CONFIG_TX,
-    ROLE,
-    START_TX,
-    PACKET_SIZE,
-    SEQ_NUM,
-    TX_NUM,
-    DUMMY,
-    WAIT_TIME,
-    ID,
-    ACK_EN,
-    PLEN64_EN,
-};
+void handle_uart_message(uint8_t *data, size_t data_len){
+  uint8_t msg_type = data[0];
+  uint8_t *payload = &data[1];
+  uint32_t *seq;
+  uint64_t *wait_time;
+  switch(msg_type){
+    case CONFIG:
+      set_dwt_config((dwt_config_t *) payload);
+    break;
+    case START_TX:
+      instance_info.node.tx_enable = 1;
+      instance_info.node.tx_timestape = m_systick_cnt;
+    break;
+    case SEQ_NUM:
+      seq = (uint32_t *) payload;
+      instance_info.node.sequence_number = *seq;
+    break;
+    case TX_NUM:
+      seq = (uint32_t *) payload;
+      instance_info.node.end_sequence_number = instance_info.node.sequence_number + *seq;
+    break;
+    case WAIT_TIME:
+      wait_time = (uint64_t *) payload;
+      instance_info.node.tx_delay_ms = wait_time;
+    break;
 
+      //instance_info.config.sequence_number = 
+  };
+  //printf("MSG type: %X\n", msg_type);
 
-
-int update_radio_config_flg = 0;
-
-
+}
 
 
 static void uart_event_handler(nrf_drv_uart_event_t * p_event, void* p_context)
@@ -60,7 +78,6 @@ static void uart_event_handler(nrf_drv_uart_event_t * p_event, void* p_context)
     {
         if (p_event->data.rxtx.bytes)
         {
-          
           switch (state){
             case SYNC_1:
             if (UART_byte == UART_HEADER[0]){
@@ -86,26 +103,8 @@ static void uart_event_handler(nrf_drv_uart_event_t * p_event, void* p_context)
               state = SYNC_1;
               uint8_t msg_type = UART_rx_msg_payload[0];
               UART_ACK[sizeof(UART_ACK) - 1] = msg_type;
-              nrf_drv_uart_rx(&app_uart_inst, &UART_byte, 1);
-              uint8_t PAC = UART_rx_msg_payload[1];
-              switch(PAC){
-                case 4:
-                  instance_info.config.radio_config.rxPAC = DWT_PAC4;
-                break;
-                case 8:
-                  instance_info.config.radio_config.rxPAC = DWT_PAC8;
-                break;
-                case 16:
-                  instance_info.config.radio_config.rxPAC = DWT_PAC16;
-                break;
-                case 32:
-                  instance_info.config.radio_config.rxPAC = DWT_PAC32;
-                break;
-              
-              }
-              update_radio_config_flg = 1;
-              send_UART_msg(UART_ACK, sizeof(UART_ACK));
-
+              handle_uart_message(UART_rx_msg_payload, packet_len);
+              //send_UART_msg(UART_ACK, sizeof(UART_ACK));
             }
           }
 
@@ -117,6 +116,8 @@ static void uart_event_handler(nrf_drv_uart_event_t * p_event, void* p_context)
     }
     else if (p_event->type == NRF_DRV_UART_EVT_ERROR)
     {
+      printf("ERR\n");
+      nrf_drv_uart_rx(&app_uart_inst, &UART_byte, 1);
         // Event to notify that an error has occured in the UART peripheral
     }
     else if (p_event->type == NRF_DRV_UART_EVT_TX_DONE)
@@ -154,9 +155,7 @@ mac_frame_802_15_4_format_t mac_frame;
 
 uint32_t seq_num = 0;
 uint32_t tx_num = 0;
-packet_std_t tx_packet;
-packet_std_t rx_packet;
-packet_info_t payload;
+
 uint32_t rx_timestamp;
 
 uint32_t swap_uint32( uint32_t num )
@@ -174,40 +173,12 @@ uint16_t swap_uint16( uint16_t num )
 
 
 void init_LEDs(){
-	dwt_enablegpioclocks();
-	dwt_write32bitoffsetreg(GPIO_MODE_ID, 0, ENABLE_ALL_GPIOS_MASK);
-	dwt_write16bitoffsetreg(GPIO_OUT_ID, 0, 0x0);
-	dwt_write16bitoffsetreg(GPIO_DIR_ID, 0, SET_OUPUT_GPIOs);
-
+    dwt_enablegpioclocks();
+    dwt_write32bitoffsetreg(GPIO_MODE_ID, 0, ENABLE_ALL_GPIOS_MASK);
+    dwt_write16bitoffsetreg(GPIO_OUT_ID, 0, 0x0);
+    dwt_write16bitoffsetreg(GPIO_DIR_ID, 0, SET_OUPUT_GPIOs);
 }
 int res;
-void init_tx_packet(){
-  tx_packet.src = identity_get_address();
-  if(identity_get_operations() & IDENTITY_OPERATIONS_TIMESYNC){
-    tx_packet.packet_id = (MSG_TIME_SYNC);
-    tx_packet.sequence_number = (0X00000000);
-  }
-  if(identity_get_operations() & (IDENTITY_OPERATIONS_DATA_TX | IDENTITY_OPERATIONS_CONSTANT_TX)){
-    tx_packet.packet_id = (MSG_DATA);
-    tx_packet.packet_id = 0x8861;
-    //tx_packet.packet_id = 0x1010;
-    tx_packet.sequence_number = (0X00000000);
-  }
-  tx_packet.src = identity_get_address();
-  tx_packet.dst = instance_info.config.dst_addr;
-  payload.sequence_number = 0;
-  for(int j=0; j< instance_info.config.packet_size; j++){
-    payload.payload[j] = (j % 100);
-  }
-  
-  memcpy(tx_packet.payload, &payload, (instance_info.config.packet_size));
-  if (dwt_writetxdata((instance_info.config.packet_size), &tx_packet, 0) != DWT_SUCCESS){
-    
-  }
-  dwt_writetxfctrl((instance_info.config.packet_size), 0, 0);
-  
-
-}
 
 void gpio_set(uint16_t port){
 	dwt_or16bitoffsetreg(GPIO_OUT_ID, 0, (port));
@@ -217,13 +188,29 @@ void gpio_reset(uint16_t port){
 	dwt_and16bitoffsetreg(GPIO_OUT_ID, 0, (uint16_t)(~(port)));
 }
 
-static uint32_t m_systick_cnt;
+
 int flg = 0;
 
 
 void SysTick_Handler(void) {
     m_systick_cnt++;
+    //if (m_systick_cnt % 1000 == 0){
+    //  if (flg == 0){
+    //    gpio_set(LED_RX);
+    //  }else{
+    //    gpio_reset(LED_RX);
+    //  }
+    //  flg = (flg + 1) % 2;
+      
+    //}
 }
+
+//void SysTick_Handler(void)  {
+//     if(++m_systick_cnt == 500) {
+//         LEDS_INVERT(BSP_LED_1_MASK); /* light LED 2 very 1 second */
+//         m_systick_cnt = 0;
+//     }
+// }
 
 void init_NRF(){
   bsp_board_init(BSP_INIT_BUTTONS);
@@ -240,96 +227,94 @@ void init_NRF(){
 
 
 
+packet_std_t tx_packet;
+packet_ranging_t * ranging_data;
 
-
-uint8_t set_radio_params(){
-
-  if (instance_info.config.cca_wait != 0){
-    dwt_setpreambledetecttimeout(instance_info.config.cca_wait);
-    return DWT_START_TX_CCA;
-  }
-  return DWT_START_TX_IMMEDIATE;
+void create_tx_packet(){
+  tx_packet.packet_id = 0x8841;
+  tx_packet.sequence_number = 0;
+  tx_packet.pan_id = 0xDECA;
+  tx_packet.src = 0x0001;
+  tx_packet.dst = 0xffff;
 }
 
-
-
-
-void instance_tx(void){
-  uint32_t n1, n2;
-  uint8_t mode;
-  mode = set_radio_params();
-  tx_packet.sequence_number = instance_info.config.sequence_number;
-  packet_info_t *payload = tx_packet.payload;
-  payload->sequence_number = instance_info.config.sequence_number;
-  dwt_writetxdata(100, (uint8_t *) &tx_packet, 0);
-  dwt_writetxfctrl(instance_info.config.packet_size, 0, 0);
-  //n1 = m_systick_cnt;
-  //while(m_systick_cnt - n1 < 1000){
-  //  nrf_delay_us(1);
-  //}
-  if (dwt_starttx(mode) != DWT_SUCCESS ){
-    instance_info.diagnostics.uwb.tx.failed_count++;
-  }
-  gpio_set(LED_TX);
-
-
-}
-
-void instance_rx(void){
-  uint8_t mode;
-  dwt_setpreambledetecttimeout(0);
-  if (dwt_rxenable(DWT_START_RX_IMMEDIATE) != DWT_SUCCESS ){
-          instance_info.diagnostics.uwb.rx.enable_error++;
-  }
-}
-
-void process_message(void){
-  if(identity_get_operations() & IDENTITY_OPERATIONS_DATA_TX){
-    if (rx_packet.src == 0){
-      tx_num = 0;
-      instance_tx();
-    }
-  }
-  if(identity_get_operations() & IDENTITY_OPERATIONS_DATA_RX){
-    instance_rx();
-  }
-
-}
-
-
-void sfd_ok_cb(const dwt_cb_data_t *cb_data){
-  //process_message();
-}
-
-
-/*! ------------------------------------------------------------------------------------------------------------------
- * @fn rx_to_cb()
- *
- * @brief Callback to process RX timeout events
- *
- * @param  cb_data  callback data
- *
- * @return  none
- */
-void rx_to_cb(const dwt_cb_data_t *cb_data){
-  //gpio_set(LED_RX);
-	//instance_info.diagnostics.uwb.rx.to_cb_count++;
-}
-
-/*! ------------------------------------------------------------------------------------------------------------------
- * @fn rx_err_cb()
- *
- * @brief Callback to process RX error events
- *
- * @param  cb_data  callback data
- *
- * @return  none
- */
+#define ALL_MSG_SN_IDX 2
+#define ALL_MSG_COMMON_LEN 10
+#define FINAL_MSG_POLL_TX_TS_IDX 10
+#define FINAL_MSG_RESP_RX_TS_IDX 14
+#define FINAL_MSG_FINAL_TX_TS_IDX 18
+uint8_t frame_seq_nb = 0;
+uint64_t poll_tx_ts, resp_rx_ts;
+uint32_t final_tx_ts;
+uint32_t final_tx_time;
+int final_tx = 0;
 void rx_err_cb(const dwt_cb_data_t *cb_data){
-  instance_info.diagnostics.uwb.rx.err_cb_count++;
+  printf("ERRR\n");
+  //instance_info.diagnostics.uwb.rx.err_cb_count++;
+}
+
+void rx_to_cb(const dwt_cb_data_t *cb_data){
+  printf("TO\n");
+  //instance_info.diagnostics.uwb.rx.err_cb_count++;
+}
+
+void tx_conf_cb(const dwt_cb_data_t *cb_data){
+  dwt_readtxtimestamp(&poll_tx_ts);
+}
+
+packet_std_t rx_packet;
+uint64_t rx_ts;
+int rx_num = 0;
+void rx_ok_cb(const dwt_cb_data_t *cb_data){
+  
+  //printf("RX");
+  dwt_readrxtimestamp(&rx_ts);
+  rx_num ++;
+  dwt_readrxdata(&rx_packet, cb_data->datalength, 0);
+  //dwt_rxenable(DWT_START_RX_IMMEDIATE);
+  switch(rx_packet.msg_type){
+    case TWR_RESP:
+      ranging_data = (packet_ranging_t *) tx_packet.payload;
+      resp_rx_ts = rx_ts;
+      ranging_data->resp_rx_ts[rx_packet.src] = resp_rx_ts;
+      instance_info.node.rx_enable = 1;
+  
+  }
+
+  //gpio_set(LED_TX);
+  
+  
 }
 
 
+void enable_intrupt_DW(){
+  dwt_setcallbacks(&tx_conf_cb, &rx_ok_cb, NULL, &rx_err_cb, NULL, NULL);
+
+  /* Enable wanted interrupts (TX confirmation, RX good frames,
+   * RX timeouts and RX errors). */
+  dwt_setinterrupt(SYS_ENABLE_LO_TXFRS_ENABLE_BIT_MASK |
+                   SYS_ENABLE_LO_RXFCG_ENABLE_BIT_MASK |
+                   SYS_ENABLE_LO_RXFTO_ENABLE_BIT_MASK |
+                   SYS_ENABLE_LO_RXPTO_ENABLE_BIT_MASK |
+                   SYS_ENABLE_LO_RXPHE_ENABLE_BIT_MASK |
+                   SYS_ENABLE_LO_RXFCE_ENABLE_BIT_MASK |
+                   SYS_ENABLE_LO_RXFSL_ENABLE_BIT_MASK |
+                   SYS_ENABLE_LO_RXSTO_ENABLE_BIT_MASK,
+                   0,
+                   DWT_ENABLE_INT);
+
+  /* Clearing the SPI ready interrupt */
+  dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RCINIT_BIT_MASK | SYS_STATUS_SPIRDY_BIT_MASK);
+
+  /* Install DW IC IRQ handler. */
+  port_set_dwic_isr(dwt_isr);
+  dwt_setrxaftertxdelay(0);
+}
+
+
+
+
+uint64_t start_time = 0;
 void instance_init(){
   init_NRF();
   uart_init();
@@ -351,336 +336,93 @@ void instance_init(){
       while (1)
       { };
   }
+  
   instance_config_identity_init();
+  enable_intrupt_DW();
+  create_tx_packet();
   dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RCINIT_BIT_MASK | SYS_STATUS_SPIRDY_BIT_MASK);
   init_LEDs();
-  ring_buffer_init();
-  if (identity_get_operations() & (IDENTITY_OPERATIONS_DATA_TX | IDENTITY_OPERATIONS_CONSTANT_TX | IDENTITY_OPERATIONS_TIMESYNC)){
-    init_tx_packet();  
-  }
-  //dwt_configureframefilter(DWT_FF_ENABLE_802_15_4, DWT_FF_DATA_EN);
-
-  if(identity_get_operations() & (IDENTITY_OPERATIONS_DATA_RX)){
-    //dwt_setaddress16(0x0003);
-    //dwt_setpanid(1);
-    instance_rx();
-  }
-  if(identity_get_operations() & IDENTITY_OPERATIONS_CONSTANT_TX){
-    instance_tx();
-  }
-  if(identity_get_operations() & IDENTITY_OPERATIONS_DATA_TX)
-    instance_rx();
   nrf_drv_uart_rx(&app_uart_inst, &UART_byte, 1);
+  instance_info.node.tx_timestape = m_systick_cnt + instance_info.node.tx_delay_ms * 1000;
 }
-
-void send_UART_msg(uint8_t *msg, uint16_t payload_len){
-  uint8_t pointer = 0;
-  UART_msg_payload[0] = 0x5C;
-  UART_msg_payload[1] = 0x51;
-  memcpy(&UART_msg_payload[2], (uint8_t *) &payload_len, 2);
-  memcpy(UART_msg_payload + 4, msg, payload_len);
-  for(int index=0; index <= payload_len + 4; index += 100){
-    send_uart(&UART_msg_payload[index], 100);
-    Sleep(20);
-  }
-  //ret =  send_uart(&UART_msg_payload[100], 100);
-  //printf("alireza\n");
-  return;
-}
-
-int seq_indicator = 10;
-int noise_preamble_indicator = 0;
-int32_t cir [2000];
-uint8_t sample[7];
-
-
-bool read_cir_regbank(uint8_t * sample_buffer,int sample_buffer_size,int offset,int32_t * real_array,int32_t * img_array,int cir_array_size){
-if (sample_buffer_size % 6 != 1)
-    return false;
-if (((sample_buffer_size - 1) / 6) != cir_array_size)
-    return false;
-    dwt_readaccdata(sample_buffer,sample_buffer_size,offset);
-    int j=0;
-    for (int i=1;i<sample_buffer_size;i+=6){
-      int32_t real=0;
-      int32_t img = 0;
-      real =  sample_buffer[i+2] << 16;
-      real += sample_buffer[i+1] << 8;
-      real += sample_buffer[i];
-      if (real & 0x020000)  // MSB of 18 bit value is 1
-        real |= 0xfffc0000;
-   //   real_array[j]=real;
-      img =  sample_buffer[i+5] << 16;
-      img += sample_buffer[i+4] << 8;
-      img += sample_buffer[i+3];
-      if (img & 0x020000)  // MSB of 18 bit value is 1
-        img |= 0xfffc0000;
-     // img_array[j]=img;
-     real_array[j]=real;
-     img_array[j]=img;
-     //printf("%d,%d\n",real,img);
-      j++;
-       
+void final_msg_set_ts(uint8_t *ts_field, uint64_t ts)
+{
+    uint8_t i;
+    for (i = 0; i < FINAL_MSG_TS_LEN; i++)
+    {
+        ts_field[i] = (uint8_t)ts;
+        ts >>= 8;
     }
-return true;
 }
 
-uint8_t ip_diag1[4];
+uint32_t status_reg;
+#define PRE_TIMEOUT 5
 
-Radio_action rx_handle_cb(){
-  bool res;
-  //uint8_t sample[CIR_SAMPLE_BUFFER];
-  //int32_t real_arr[CIR_SAMPLE];
-  //int32_t img_arr[CIR_SAMPLE];
-  //int k=0;
-
-  //for (int offset = 0; offset < 992 ; offset+=32){
-  //  read_cir_regbank(sample,CIR_SAMPLE_BUFFER,offset,real_arr,img_arr,CIR_SAMPLE);
- 
-  //  for(int j=0;j<32;j++)
-  //  {
-  //    cir[k]=real_arr[j];
-  //    k++;
-  //    cir[k]=img_arr[j];
-  //    k++;
-      
-  //  }
-  //}
-  //send_UART_msg((uint8_t *) &cir[1400], 2400);
-  dwt_rxdiag_t diagnostics;
-  dwt_readdiagnostics(&diagnostics);
-  uint16_t N = dwt_read16bitoffsetreg(0xc0000,0x58)& 0xFFF;//N
-  uint32_t C = dwt_read32bitoffsetreg(0xc0000,0x2C)& 0x1FFFF;//C
-  uint8_t dgc=(dwt_read32bitoffsetreg(0x30000,0x60))>>28;//D
-
-   
-  dwt_readfromdevice(IP_TOA_LO_ID,IP_DIAG_1_ID - IP_TOA_LO_ID,IP_DIAG_1_LEN,ip_diag1);
-  dwt_readrxdata( &rx_packet, 40, 0);
-  dwt_readrxdata( (uint8_t *)(&rx_packet) + 40, 40, 40);
-  if (identity_get_operations() & IDENTITY_OPERATIONS_DATA_RX){
-    gpio_set(PORT_DE);
-    gpio_reset(PORT_DE);
-    packet_info_t *payload = rx_packet.payload;
-    report_packet_t rep = {
-      payload->sequence_number,
-      N,
-      C,
-      dgc
-    };
-    send_UART_msg((uint8_t *) &rep, sizeof(rep));
-    printf("%d,%d,%d\n",ip_diag_1,ip_diag_12,dgc);
-    printf("%d\n",payload->sequence_number);
-    
-  }
-  if (identity_get_operations() & IDENTITY_OPERATIONS_DATA_TX)
-    return ACTION_TX_DLY;
-  if (identity_get_operations() & IDENTITY_OPERATIONS_DATA_RX)
-    return ACTION_RX;
-}
-
-Radio_action tx_handle_cb(){
-    instance_info.config.sequence_number++;
-     if (
-       instance_info.config.tx_number != 0 && 
-       instance_info.config.sequence_number >= instance_info.config.tx_number
-     ){
-      gpio_set(LED_RX);
-      gpio_set(LED_TX);
-      return ACTION_NONE;
-    }
-    if (identity_get_operations() & IDENTITY_OPERATIONS_DATA_TX){
-      return ACTION_RX;   
-    }
-    if (identity_get_operations() & IDENTITY_OPERATIONS_CONSTANT_TX)
-      return ACTION_TX;
-}
+//void instance_loop(){
+//  printf("STart\n");
+//  switch(instance_info.node.tx_msg_type){
+//  case TWR_POLL:
+//    dwt_writetxdata(PACKET_STD_HDR_LEN + FCS_LEN, &tx_packet, 0);
+//    dwt_writetxfctrl(PACKET_STD_HDR_LEN + FCS_LEN, 0, 1);
+//    int res = dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
+//    instance_info.node.tx_msg_type = TWR_FINAL;
+//  break;
+//    case TWR_FINAL:
+//    tx_packet.msg_type = TWR_POLL;
+//    break;
+// }
+//  Sleep(500);
+//}
 
 
-
-uint32_t status_reg, status_regh;
-Radio_action rx_err_handle_cb(){
-  uint16_t N = dwt_read16bitoffsetreg(0xc0000,0x58)& 0xFFF;//N
-  uint32_t C = dwt_read32bitoffsetreg(0xc0000,0x2C)& 0x1FFFF;//C
-  uint8_t dgc=(dwt_read32bitoffsetreg(0x30000,0x60))>>28;//D
-  gpio_set(PORT_DE);
-  gpio_reset(PORT_DE);
-  packet_info_t *payload = rx_packet.payload;
-  report_packet_t rep = {
-    payload->sequence_number,
-    N,
-    C,
-    dgc
-  };
-  send_UART_msg((uint8_t *) &rep, sizeof(rep));
-  printf("ERR: %d,%d,%d\n",ip_diag_1,ip_diag_12,dgc);
-
-
-  //if(status_reg & SYS_STATUS_RXFSL_BIT_MASK){
-  //    for (int index = 0; index < 500; index++){
-  //      dwt_readaccdata(sample, sizeof(sample), index);
-  //      int32_t real = 0;
-  //      real =  sample[3] << 16;
-  //      real += sample[2] << 8;
-  //      real += sample[1];
-  //      if (real & 0x020000)  // MSB of 18 bit value is 1
-  //          real |= 0xfffc0000;
-  //      int32_t img = 0;
-  //      img =  sample[6] << 16;
-  //      img += sample[5] << 8;
-  //      img += sample[4];
-  //      if (img & 0x020000)  // MSB of 18 bit value is 1
-  //          img |= 0xfffc0000;
-  //      printf("%d, %d, %f\n", real, img, sqrt(real*real + img*img));
-  //    }
-
-  //      for (int index = 500; index < 1000; index++){
-  //      dwt_readaccdata(sample, sizeof(sample), index);
-  //      int32_t real = 0;
-  //      real =  sample[3] << 16;
-  //      real += sample[2] << 8;
-  //      real += sample[1];
-  //      if (real & 0x020000)  // MSB of 18 bit value is 1
-  //          real |= 0xfffc0000;
-  //      int32_t img = 0;
-  //      img =  sample[6] << 16;
-  //      img += sample[5] << 8;
-  //      img += sample[4];
-  //      if (img & 0x020000)  // MSB of 18 bit value is 1
-  //          img |= 0xfffc0000;
-  //      printf("%d, %d, %f\n", real, img, sqrt(real*real + img*img));
-  //    }
-  
-  //}
-  noise_preamble_indicator++;
-  return ACTION_RX;
-}
-
-Radio_action cca_fail_handle_cb(){
-  return ACTION_TX;
-}
-
-void update_radio_config(){
-  port_set_dw_ic_spi_fastrate();
-  /* Reset DW IC */
-  reset_DWIC(); /* Target specific drive of RSTn line into DW IC low for a period. */
-  Sleep(2); // Time needed for DW3000 to start up (transition from INIT_RC to IDLE_RC, or could wait for SPIRDY event)
-
-  while (!dwt_checkidlerc()) /* Need to make sure DW IC is in IDLE_RC before proceeding */
-  { };
-
-  if (dwt_initialise(DWT_DW_INIT) == DWT_ERROR)
-  {
-      while (1)
-      { };
-  }
-  if(dwt_configure(&instance_info.config.radio_config)){
-    printf("config failed\n");
-  
-  }else{
-    printf("config successful\n");
-  }
-  instance_rx();
-}
-
-
-
-uint32_t ts1, ts2;
-int err_counter = 0;
 void instance_loop(){
-  Radio_action act = ACTION_NONE;
-  int cca_flg = 0;
-  status_reg = dwt_read32bitreg(SYS_STATUS_ID);
-  status_regh = dwt_read32bitreg(SYS_STATUS_HI_ID);
-  if (status_reg & SYS_ENABLE_LO_TXFRB_ENABLE_BIT_MASK){
-    gpio_reset(LED_TX);
-    gpio_set(LED_TX);
-  }
-
-  if (status_reg & SYS_ENABLE_LO_TXPRS_ENABLE_BIT_MASK){
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRB_BIT_MASK);
-    gpio_set(LED_TX);
-  }
-
-  if ((status_reg & SYS_STATUS_TXFRS_BIT_MASK)){
-    gpio_reset(LED_TX);
-    dwt_write8bitoffsetreg(SYS_STATUS_ID, 0, (uint8_t)SYS_STATUS_ALL_TX);
-    gpio_reset(PORT_DE);
-    cca_flg = 0;
-    act = tx_handle_cb();
-  }
-
-
-  if((status_regh & SYS_STATUS_HI_CCA_FAIL_BIT_MASK) && ((status_reg & SYS_STATUS_TXFRS_BIT_MASK) == 0)){
-    dwt_write8bitoffsetreg(SYS_STATUS_ID, 0, (uint8_t)SYS_STATUS_ALL_TX);
-    dwt_forcetrxoff();
-    gpio_set(PORT_DE);
-    gpio_reset(LED_TX);
-    cca_flg = 1;
-    act = cca_fail_handle_cb();
-  }
-
-
-  if (status_reg & SYS_ENABLE_LO_RXPRD_ENABLE_BIT_MASK){
-     dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXPRD_BIT_MASK);
-     ts1 = m_systick_cnt; 
-     gpio_set(LED_RX);
-  }
-  if (status_reg & SYS_ENABLE_LO_RXPHD_ENABLE_BIT_MASK){
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_ENABLE_LO_RXSFDD_ENABLE_BIT_MASK);
-    //gpio_reset(LED_RX);
-    //gpio_set(LED_RX);
-
-  }
-  if (status_reg & SYS_STATUS_ALL_RX_ERR){
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_ERR);
-    ts2 = m_systick_cnt;
-    //printf("%d, %d,", err_counter, ts2-ts1);
-    //err_counter++;
-    //if(status_reg & SYS_STATUS_RXPHE_BIT_MASK)
-    //  printf("PHE\n");
-    //if(status_reg & SYS_STATUS_RXFCE_BIT_MASK)
-    //  printf("FCE\n");
-    //if(status_reg & SYS_STATUS_RXFSL_BIT_MASK)
-    //  printf("FSL\n");
-    //if(status_reg & SYS_STATUS_RXSTO_BIT_MASK)
-    //  printf("STO\n");
-    //if(status_reg & SYS_STATUS_CIAERR_BIT_MASK)
-    //  printf("CIA\n");
-    //if(status_reg & SYS_STATUS_ARFE_BIT_MASK)
-    //  printf("aref\n");
-
-    gpio_reset(LED_RX); 
-    act = rx_err_handle_cb();
+  uint64_t t = m_systick_cnt;
+  if (instance_info.node.tx_enable && t > instance_info.node.tx_timestape){
+    instance_info.node.tx_enable = 0;
+    //dwt_forcetrxoff();
+    switch(instance_info.node.tx_msg_type){
+      case TWR_POLL:
+        
+        printf("START...\n");  
+        tx_packet.msg_type = TWR_POLL;
+        dwt_writetxdata(PACKET_STD_HDR_LEN + FCS_LEN, &tx_packet, 0);
+        dwt_writetxfctrl(PACKET_STD_HDR_LEN + FCS_LEN, 0, 1);
+        int res = dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
+        instance_info.node.tx_msg_type = TWR_FINAL;
+        instance_info.node.tx_enable = 1;
+        gpio_set(LED_TX);instance_info.node.tx_timestape = m_systick_cnt + instance_info.twr.initiator.tx_final_dly_ms * 1000;
+        //printf("%d\n", res);     
+      break;
+      case TWR_FINAL:
+        gpio_reset(LED_TX);
+        tx_packet.msg_type = TWR_FINAL;
+        ranging_data = (packet_ranging_t *) (tx_packet.payload);
+        dwt_readtxtimestamp(&poll_tx_ts);
+        uint32_t current_ts = dwt_readsystimestamphi32();
+        final_tx_time = (current_ts) + ((5000 * UUS_TO_DWT_TIME) >> 8);
+        dwt_setdelayedtrxtime(final_tx_time);
+        final_tx_ts = (((uint64_t)(final_tx_time & 0xFFFFFFFEUL)) << 8) + TX_ANT_DLY;
+        ranging_data->poll_tx_ts = poll_tx_ts;
+        ranging_data->final_tx_ts = final_tx_ts;
+        dwt_forcetrxoff();
+        dwt_writetxdata(PACKET_STD_HDR_LEN + sizeof(packet_ranging_t) + FCS_LEN, &tx_packet, 0); /* Zero offset in TX buffer. */
+        dwt_writetxfctrl(PACKET_STD_HDR_LEN + sizeof(packet_ranging_t) + FCS_LEN, 0, 1); /* Zero offset in TX buffer, ranging bit set. */
+        int ret = dwt_starttx(DWT_START_TX_DELAYED);
+        ////printf("diff: %d\n", (current_ts - ranging_data->resp_rx_ts));
+        //printf("%d\n", ret);
+        memset(ranging_data, 0, sizeof(packet_ranging_t)); 
+        instance_info.node.tx_timestape = m_systick_cnt + instance_info.node.tx_delay_ms * 1000;
+        instance_info.node.tx_msg_type = TWR_POLL;
+        instance_info.node.tx_enable = 1;
+        rx_num = 0;
+      break;
+    
+    };
     
   }
-  if (status_reg & SYS_STATUS_RXFCG_BIT_MASK){
-    
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
-    ts2 = m_systick_cnt;
-    //printf("%d,", ts2-ts1);
-    act = rx_handle_cb();
-    gpio_reset(LED_RX);
-  }
- 
-  if (act == ACTION_RX){
-    instance_rx();
-  }
-  if (act == ACTION_TX){
-    if(!cca_flg){
-      Sleep(instance_info.config.IPI_wait);
-    }
-    instance_tx();
-  }
-  if (act == ACTION_TX_DLY){
-    nrf_delay_us(instance_info.config.tx_after_rx_wait);
-    //Sleep(1);
-    //gpio_set(LED_TX);
-    instance_tx();
-  }
-  if(update_radio_config_flg){
-    update_radio_config_flg = 0;
-    update_radio_config();
-    
+  if(instance_info.node.rx_enable){
+    instance_info.node.rx_enable = 0;
+    dwt_rxenable(DWT_START_RX_IMMEDIATE);
   }
 
 }

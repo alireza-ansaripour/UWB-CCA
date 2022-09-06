@@ -1,34 +1,6 @@
 #include "deca_types.h"
 #include "deca_device_api.h"
 
-typedef struct{
-	uint16_t packet_id; // PACKET_ID
-	uint8_t sequence_number __attribute__((packed));
-	uint16_t pan_id; __attribute__((packed)); // PAN_ID
-	uint16_t dst;
-	uint16_t src;
-	uint16_t crc;
-        uint8_t payload[900];
-} packet_std_t __attribute__((packed));
-
-typedef  struct{
-  uint32_t sequence_number;
-  uint8_t payload[900];
-}packet_info_t __attribute__((packed)); 
-
-
-typedef struct{
-  uint32_t sequence_number;
-  uint32_t N;
-  uint16_t C;
-  uint16_t dcg;
-}report_packet_t __attribute__((packed));
-
-#define MSG_TIME_SYNC					0x76
-#define MSG_DATA                                        0xDA
-#define MSG_CONF				        0xC0
-
-
 #define LED_RX GPIO_DIR_GDP2_BIT_MASK
 #define LED_TX GPIO_DIR_GDP3_BIT_MASK
 #define PORT_DE GPIO_DIR_GDP1_BIT_MASK
@@ -38,10 +10,8 @@ typedef struct{
 
 
 typedef enum Role{
-	ROLE_TX,
-	ROLE_RX,
-	ROLE_TS,
-        ROLE_TX_TS,
+	ROLE_INIT,
+	ROLE_RESP,
 }Role;
 
 typedef enum Radio_action{
